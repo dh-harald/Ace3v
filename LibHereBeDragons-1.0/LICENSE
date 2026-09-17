@@ -1,0 +1,44 @@
+BSD 2-Clause License
+
+Copyright (c) 2026 Peter Nyilas
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+---
+
+Attribution
+
+This library implements the public API of HereBeDragons-1.0 by Hendrik Leppkes
+(Nevcairiel), which declares "BSD" as its licence. The implementation here is
+independent: HereBeDragons queries the running client and works from world
+coordinates, while this library works from a static zone table generated offline
+from the vanilla WorldMapArea DBC and from 0-1 map coordinates, because the
+client it targets exposes no world position at all. No HereBeDragons code is
+included.
+
+BSD 2-Clause is used so that this library and its companion,
+LibHereBeDragons-Pins-1.0 -- which does contain ported HereBeDragons code, and
+carries Nevcairiel's copyright accordingly -- are distributed under the same
+terms as the work they follow.
