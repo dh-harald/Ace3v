@@ -581,13 +581,20 @@ local function minimapArrowModel()
 	return nil
 end
 
--- Is the minimap rotating?  Same capability gate as the pins library: GetCVar answers "0" for
--- an unregistered name, so GetCVarDefault is what actually says whether it exists.
+-- Is a CVar registered?  Same capability gate as the pins library: GetCVar answers "0" for an
+-- unregistered name, so GetCVarDefault is what actually says whether it exists -- nil on
+-- Unreal Azeroth, an error on stock 1.12.1, which is what the pcall is for.  Fails SAFE
+-- toward "registered" when GetCVarDefault is itself missing.
+local function cvarRegistered(name)
+	if type(GetCVarDefault) ~= "function" then return true end
+	local ok, default = pcall(GetCVarDefault, name)
+	return ok and default ~= nil
+end
+
+-- Is the minimap rotating?
 local function rotatingMinimap()
 	if type(GetCVar) ~= "function" then return false end
-	if type(GetCVarDefault) == "function" and GetCVarDefault("rotateMinimap") == nil then
-		return false
-	end
+	if not cvarRegistered("rotateMinimap") then return false end
 	return GetCVar("rotateMinimap") == "1"
 end
 

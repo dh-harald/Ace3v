@@ -122,20 +122,23 @@ end
 -- Client capabilities
 --
 -- GetCVar returns the string "0" for an unregistered name, which is indistinguishable from
--- a real zero, so GetCVarDefault (nil when unregistered) is the probe.  Fail SAFE toward
--- "the CVars work": if GetCVarDefault itself is missing, assume a client that has them, so
--- stock 1.12.1 keeps upstream's exact behaviour.
+-- a real zero, so GetCVarDefault is the probe -- but the clients disagree on how they say
+-- "no such CVar": Unreal Azeroth returns nil, stock 1.12.1 raises an error.  This accessor
+-- absorbs both, and fails SAFE toward "registered": if GetCVarDefault is itself missing the
+-- CVars are assumed to work, so nothing that a client really has gets disabled.
 --------------------------------------------------------------------------------------------
+
+local function cvarRegistered(name)
+	if type(GetCVarDefault) ~= "function" then return true end
+	local ok, default = pcall(GetCVarDefault, name)
+	return ok and default ~= nil
+end
 
 local cvarsUsable, rotateCVarUsable
 
 local function probeCVars()
-	if type(GetCVarDefault) ~= "function" then
-		cvarsUsable, rotateCVarUsable = true, true
-		return
-	end
-	cvarsUsable = GetCVarDefault("minimapZoom") ~= nil and GetCVarDefault("minimapInsideZoom") ~= nil
-	rotateCVarUsable = GetCVarDefault("rotateMinimap") ~= nil
+	cvarsUsable = cvarRegistered("minimapZoom") and cvarRegistered("minimapInsideZoom")
+	rotateCVarUsable = cvarRegistered("rotateMinimap")
 end
 probeCVars()
 

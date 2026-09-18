@@ -91,7 +91,8 @@ The minimap's radius in yards depends on the zoom level *and* on whether the pla
 the only way to tell on this client family is to compare the `minimapZoom` and `minimapInsideZoom`
 CVars. **Unreal Azeroth registers neither**, and `GetCVar` returns the string `"0"` for an
 unregistered name, which is indistinguishable from a genuine zero. So the library probes with
-`GetCVarDefault`, which returns `nil` for a name that does not exist:
+`GetCVarDefault`, which for a name that does not exist returns `nil` on Unreal Azeroth and **raises an
+error** on stock 1.12.1 — the probe runs inside a `pcall` and treats both answers as "not registered":
 
 - **CVars available** (stock 1.12.1): upstream's method exactly, including the one-step zoom nudge
   that disambiguates the two environments when both CVars happen to be equal. The zoom is restored
@@ -108,7 +109,8 @@ unregistered name, which is indistinguishable from a genuine zero. So the librar
   `pins:SetMinimapEnvironment("indoor")` if you want to force the other table.
 
 The gate fails **safe**: if `GetCVarDefault` itself were missing, the CVars are assumed to work, so a
-client that has them keeps upstream behaviour. If Unreal Azeroth ever implements them, the same code
+client that has them keeps upstream behaviour. An *error* from it is not treated that way — on stock
+1.12.1 that is precisely how the client says "no such CVar", and a registered name never throws. If Unreal Azeroth ever implements them, the same code
 path activates with no change needed.
 
 | Signature | Returns |
