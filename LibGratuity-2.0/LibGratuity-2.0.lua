@@ -19,7 +19,7 @@ local strfind, strgsub, strfmt = string.find, string.gsub, string.format
 local tinsert = table.insert
 local type, pairs, pcall, error = type, pairs, pcall, error
 local setmetatable, rawset = setmetatable, rawset
-local _G = _G
+local _G = _G or getfenv()
 
 -- The scanning tooltip is built from GameTooltipTemplate and read through its
 -- named line globals (<name>TextLeftN / <name>TextRightN). On Unreal Azeroth a

@@ -36,6 +36,8 @@
 -- The key getters return true/false on Unreal Azeroth and 1/nil on vanilla;
 -- every reading is normalized to a boolean.
 
+local _G = _G or getfenv()
+
 local MAJOR, MINOR = "LibModifierState-1.0", 1
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end
