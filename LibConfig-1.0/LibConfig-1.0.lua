@@ -17,7 +17,7 @@
 --
 -- Distributed as a LibStub embedded minor, like Ace3.
 
-local MAJOR, MINOR = "LibConfig-1.0", 2
+local MAJOR, MINOR = "LibConfig-1.0", 3
 local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return -- already loaded (older/newer minor)
@@ -31,9 +31,15 @@ local THEME = {
     backdrop     = { 0.10, 0.10, 0.10, 1.00 },
     backdropFade = { 0.06, 0.06, 0.06, 0.80 },
     border       = { 0.31, 0.31, 0.31, 1.00 },
+    borderDim    = { 0.22, 0.22, 0.22, 1.00 },
     hover        = { 0.60, 0.60, 0.60, 1.00 },
     -- accent (#FFD100)
     accent       = { 1.00, 0.82, 0.00, 1.00 },
+    -- The accent with the colour taken out of it, for a control that is
+    -- switched ON but cannot be operated. Stands in for AceGUI's
+    -- SetDesaturation(check, true), which real ElvUI's own config window
+    -- uses on a disabled checkbox.
+    accentDim    = { 0.55, 0.55, 0.55, 1.00 },
     accentFill   = { 1.00, 0.82, 0.00, 0.22 },
     sliderThumb  = { 1.00, 0.82, 0.00, 1.00 },
     -- text
@@ -730,15 +736,22 @@ end
 -- ===========================================================================
 -- Widgets (each returns a control table with SetValue / SetPoint / uuiParts)
 -- ===========================================================================
+-- A disabled checkbox is drawn greyed OUT ON THE BOX ITSELF -- the checked
+-- fill loses its colour and the border darkens -- while the option's NAME
+-- keeps its normal text colour (RenderLeaf's toggle branch asks for that
+-- explicitly). That split is what real ElvUI's config window looks like,
+-- and it keeps the name readable: the box is the part that can't be
+-- operated, not the label describing it.
 local function CreateCheckbox(parent, options)
     options = options or {}
     local size = options.size or 16
     local control = { uuiParts = {} }
     local parts = control.uuiParts
+    local disabled = options.disabled and true or false
 
     local function Apply()
         if control.value then
-            SetBackgroundColor(control.box, THEME.accent)
+            SetBackgroundColor(control.box, disabled and THEME.accentDim or THEME.accent)
         else
             SetBackgroundColor(control.box, THEME.backdrop)
         end
@@ -749,6 +762,15 @@ local function CreateCheckbox(parent, options)
         text = "",
         width = size,
         height = size,
+        -- Both passed at CREATION time on purpose: CreateButton's own
+        -- OnLeave reverts the border to whatever `border` was then, so a
+        -- colour applied afterwards would be wiped by the first hover.
+        -- Pinning hoverBorder to the same value stops a dead box from
+        -- lighting up under the cursor. Safe because `disabled` never
+        -- changes on a live control -- RenderLeaf rebuilds the whole page
+        -- instead.
+        border = disabled and THEME.borderDim or nil,
+        hoverBorder = disabled and THEME.borderDim or nil,
         onClick = function()
             if control.disabled then return end
             control.value = not control.value
@@ -761,7 +783,7 @@ local function CreateCheckbox(parent, options)
     control.box = box
     table.insert(parts, box)
 
-    control.disabled = options.disabled and true or false
+    control.disabled = disabled
 
     control.SetValue = function(value)
         control.value = value and true or false
@@ -785,12 +807,29 @@ end
 -- has several: a free-text keyword list, custom texture paths) silently
 -- rendered NOTHING, no error, just an empty gap.
 -- ===========================================================================
+-- One line of GameFontHighlightSmall, used to size a `multiline` box.
+local EDIT_LINE_H = 14
+
 local function CreateEditBox(parent, options)
     options = options or {}
     local width = options.width or 200
     local height = options.height or ROW_HEIGHT
+
+    -- AceConfig's own `multiline` field on type="input": true, or a number
+    -- of visible lines. The box grows to that many lines and keeps real
+    -- line breaks instead of flattening them.
+    local multiline = false
+    if options.multiline then
+        multiline = true
+        local lines = tonumber(options.multiline) or 4
+        if lines < 2 then lines = 2 end
+        if lines > 16 then lines = 16 end
+        height = lines * EDIT_LINE_H + 8
+    end
+
     local control = { uuiParts = {} }
     local parts = control.uuiParts
+    control.height = height
 
     local box = CreateFrame("Frame", options.name and (options.name .. "Box") or nil, parent)
     box:SetWidth(width)
@@ -799,11 +838,49 @@ local function CreateEditBox(parent, options)
     control.box = box
     table.insert(parts, box)
 
-    local edit = CreateFrame("EditBox", options.name and (options.name .. "EditBox") or nil, box)
-    edit:SetPoint("TOPLEFT", box, "TOPLEFT", 6, -1)
-    edit:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -6, 1)
+    -- A ScrollFrame used as a CLIPPING WINDOW, not as something to scroll.
+    --
+    -- A long value does not stay inside an EditBox on this client: the text
+    -- wraps at the box's width and simply keeps drawing downwards, over
+    -- every other widget on the page and far outside the box (a profile
+    -- export string covered the entire options window). There is no
+    -- SetClipsChildren here to switch on, but a ScrollFrame DOES clip its
+    -- scroll child -- measured: the sprawling text stopped exactly at the
+    -- options panel's own content ScrollFrame edges. So the text frame is
+    -- made tall enough to hold anything and parked inside a window the
+    -- size of the box.
+    --
+    -- Nothing scrolls it. The box shows the START of the value; the rest is
+    -- present but off-window, which is all a copy-out field needs. Adding a
+    -- wheel handler here would also fight the page's own scrolling, since
+    -- the wheel goes to whichever ScrollFrame is under the cursor.
+    --
+    -- The text frame inside is sized to the WINDOW, not to the text. An
+    -- earlier attempt made it 400 lines tall on the multiline branch, on
+    -- the assumption that the value had to fit inside its own frame: the
+    -- box then rendered EMPTY, because the text is laid out against the
+    -- frame's own height and ended up far below the visible window. It
+    -- never needed the room -- overflowing its frame is what this widget
+    -- does anyway, and the ScrollFrame is what makes that harmless.
+    local clip = CreateFrame("ScrollFrame", nil, box)
+    clip:SetPoint("TOPLEFT", box, "TOPLEFT", 6, -4)
+    clip:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -6, 4)
+    control.clip = clip
+    table.insert(parts, clip)
+
+    local edit = CreateFrame("EditBox", options.name and (options.name .. "EditBox") or nil, clip)
+    edit:SetWidth(math.max(1, width - 12))
+    edit:SetHeight(math.max(1, height - 8))
+    pcall(clip.SetScrollChild, clip, edit)
+    -- Explicit on both branches: a single-line EditBox is supposed to
+    -- scroll its own text sideways rather than wrap, and saying so costs
+    -- nothing on a client that already behaves.
+    pcall(edit.SetMultiLine, edit, multiline)
     pcall(edit.SetAutoFocus, edit, false)
     pcall(edit.SetJustifyH, edit, "LEFT")
+    -- A multiline value has to start at the frame's top edge; a one-line
+    -- box centres its text in the row the way every other control does.
+    pcall(edit.SetJustifyV, edit, multiline and "TOP" or "MIDDLE")
     pcall(edit.SetFontObject, edit, GameFontHighlightSmall)
     SetTextColor(edit, THEME.text)
     if options.maxLetters then pcall(edit.SetMaxLetters, edit, options.maxLetters) end
@@ -825,48 +902,55 @@ local function CreateEditBox(parent, options)
     control.edit = edit
     table.insert(parts, edit)
 
-    -- Strips a literal newline the moment it appears in the box (typed,
-    -- or pasted): a multi-line value (a
-    -- serialized profile table, real newlines between entries) would
-    -- otherwise render COMPLETELY UNCLIPPED in this small box, sprawling across and
-    -- behind the entire options window. This box has no bounding
-    -- ScrollFrame, and this vintage client has no SetClipsChildren to
-    -- fall back on -- a real fix would need a genuinely different,
-    -- ScrollFrame-backed multi-line widget. Cheaper and immediate:
-    -- guarantee this box is ALWAYS effectively single-line regardless of
-    -- what's fed into it, so there's never a newline left to sprawl on.
-    -- `suppressTextChanged` guards against SetText below re-triggering
-    -- this same handler.
-    local suppressTextChanged = false
-    edit:SetScript("OnTextChanged", function()
-        if suppressTextChanged then return end
-        local text = edit:GetText() or ""
-        if string.find(text, "\n") then
-            local flattened = string.gsub(text, "\n%s*", " ")
-            suppressTextChanged = true
-            edit:SetText(flattened)
-            pcall(edit.SetCursorPosition, edit, string.len(flattened))
-            suppressTextChanged = false
-        end
-    end)
+    -- Single-line boxes strip a literal newline the moment it appears
+    -- (typed, or pasted), so a value carrying real line breaks can never
+    -- turn a one-row box into a block of text. A `multiline` box is
+    -- exactly the opposite -- its line breaks are the point -- so it keeps
+    -- them. `suppressTextChanged` guards against SetText below
+    -- re-triggering this same handler.
+    if not multiline then
+        local suppressTextChanged = false
+        edit:SetScript("OnTextChanged", function()
+            if suppressTextChanged then return end
+            local text = edit:GetText() or ""
+            if string.find(text, "\n") then
+                local flattened = string.gsub(text, "\n%s*", " ")
+                suppressTextChanged = true
+                edit:SetText(flattened)
+                pcall(edit.SetCursorPosition, edit, string.len(flattened))
+                suppressTextChanged = false
+            end
+        end)
+    end
 
     -- Enter commits and clears focus (which also fires OnEditFocusLost --
     -- harmless, it just re-sends the same already-committed text). Escape
     -- reverts to the last known-good value without committing. Clicking
     -- away (focus lost) also commits, matching the slider readout's own
     -- forgiving "don't require Enter" behavior above.
+    -- Commits only a value that actually differs from the last one. Focus
+    -- is lost every time the user clicks anywhere else, so without this a
+    -- box that was merely clicked into would report a "change" and make
+    -- the caller act on it -- with a page redraw hung off the callback,
+    -- that redraw would land in the middle of the click that caused it and
+    -- eat it, since the widget being clicked is rebuilt.
     local function Commit()
         local text = edit:GetText() or ""
+        if text == control.value then return end
         control.value = text
         if type(options.onChange) == "function" then
             options.onChange(text)
         end
     end
 
-    edit:SetScript("OnEnterPressed", function()
-        Commit()
-        pcall(edit.ClearFocus, edit)
-    end)
+    -- Not on a multiline box: there Enter is a line break the user asked
+    -- for, so the value is committed when focus leaves instead.
+    if not multiline then
+        edit:SetScript("OnEnterPressed", function()
+            Commit()
+            pcall(edit.ClearFocus, edit)
+        end)
+    end
     edit:SetScript("OnEditFocusGained", function() focusedEditBox = edit end)
     edit:SetScript("OnEditFocusLost", function()
         if focusedEditBox == edit then focusedEditBox = nil end
@@ -1626,6 +1710,19 @@ local function CreateSlider(parent, options)
         return clamped
     end
 
+    -- Fired once the user has FINISHED choosing a value -- the drag is
+    -- released, or a typed value is entered -- as opposed to onChange,
+    -- which fires for every stepped value passed through while dragging.
+    -- AceConfigDialog draws the same line (it refreshes its window on a
+    -- range option's OnMouseUp, never on OnValueChanged), and for the same
+    -- reason: anything heavy hung off the live callback runs hundreds of
+    -- times per drag.
+    local function Commit()
+        if type(options.onCommit) == "function" then
+            options.onCommit(control.current)
+        end
+    end
+
     -- Guards against firing onChange twice for one Enter press: OnEnterPressed
     -- clears focus, which also fires OnEditFocusLost -- by the second call the
     -- box already shows the clamped value, so it's a no-op resync, not a
@@ -1642,6 +1739,7 @@ local function CreateSlider(parent, options)
             return
         end
         Publish(clamped)
+        Commit()
     end
 
     readout:SetScript("OnEnterPressed", function()
@@ -1723,6 +1821,7 @@ local function CreateSlider(parent, options)
             -- The thumb tracked the cursor smoothly; put it back on the
             -- exact stepped position of whatever value was committed.
             PlaceThumb(control.current or min)
+            Commit()
         end,
     })
 
@@ -2591,7 +2690,16 @@ local function CreateColorPicker(parent, options)
         d.start = { r = start.r, g = start.g, b = start.b, a = start.a }
         d.current = { r = start.r, g = start.g, b = start.b, a = start.a }
         d.onPreview = function(color) Publish(color, true) end
-        d.onFinish = function(color) Publish(color, true) end
+        -- onFinish is the dialog's OK, i.e. the colour the user settled
+        -- on; onPreview fires continuously while a marker is dragged.
+        -- Only the former is a commit -- same split AceConfigDialog makes
+        -- between OnValueConfirmed and OnValueChanged.
+        d.onFinish = function(color)
+            Publish(color, true)
+            if type(options.onCommit) == "function" then
+                options.onCommit(control.value)
+            end
+        end
 
         if d.title then d.title:SetText(options.text or "Select Color") end
 
@@ -2936,6 +3044,19 @@ local currentPage
 
 local SelectPage -- forward declaration; assigned after RenderSidebar
 
+-- Re-renders the page currently on screen so every widget re-reads its own
+-- `get`. Assigned next to SelectPage, far below.
+--
+-- THE DECLARATION HAS TO STAY HERE, ABOVE RenderLeaf. An `execute`
+-- button's onClick closure is compiled inside RenderLeaf, so it can only
+-- capture locals that already exist at that point -- declared any later,
+-- the closure silently resolves the name as a GLOBAL instead, which is nil
+-- at runtime. With a `if RefreshOpenPage then` guard around the call that
+-- fails as a no-op with no error at all: the button appears dead. (Same
+-- trap the RenderContent forward declaration further down warns about,
+-- which is placed for RenderTabStrip -- a function defined AFTER it.)
+local RefreshOpenPage
+
 local function AddWidget(w)
     table.insert(contentWidgets, w)
 end
@@ -2957,9 +3078,32 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
     local disabled = ResolveMember("disabled", root, appName, path, handler, arg, opt)
     local t = opt.type
 
-    local function AddNameLabel()
+    -- Redraws the page after a control has COMMITTED a value, so the rest
+    -- of the page catches up: a `disabled`/`hidden` function that depends
+    -- on the value just written, a `name`/`values` that reads it, an entry
+    -- the set itself added or removed.
+    --
+    -- AceConfigDialog does exactly this, from the same place -- the end of
+    -- its ActivateControl -- and this library follows it, including which
+    -- events count as a commit: everything immediately, EXCEPT `range`
+    -- (only when the drag is released, never per stepped value) and
+    -- `color` (only on the dialog's OK, never per preview). Both of those
+    -- arrive here through the widgets' `onCommit`.
+    --
+    -- The cost is a full page rebuild per interaction, and this library
+    -- builds fresh widgets on every render rather than pooling them.
+    local function AfterCommit()
+        RefreshOpenPage()
+    end
+
+    -- Dimming the NAME is the fallback disabled cue, for the control types
+    -- that have no way of showing the state on themselves. A type that
+    -- greys out its own control (toggle) passes false and keeps its label
+    -- at normal text colour, matching real ElvUI's config window.
+    local function AddNameLabel(dimWhenDisabled)
+        if dimWhenDisabled == nil then dimWhenDisabled = true end
         local label = CreateLabel(content, {
-            color = disabled and THEME.textDim or THEME.text,
+            color = (disabled and dimWhenDisabled) and THEME.textDim or THEME.text,
             inherits = "GameFontNormalSmall",
             justify = "LEFT",
             width = LABEL_WIDTH,
@@ -3010,12 +3154,13 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
 
     elseif t == "toggle" then
         local current = ResolveMember("get", root, appName, path, handler, arg, opt)
-        AddNameLabel()
+        AddNameLabel(false)
         local cb = CreateCheckbox(content, {
             value = current,
             disabled = disabled,
             onChange = function(v)
                 ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                AfterCommit()
             end,
         })
         cb:SetPoint("TOPLEFT", content, "TOPLEFT", LABEL_WIDTH + CONTROL_GAP, -yCursor + (ROW_HEIGHT - 16) / 2)
@@ -3025,7 +3170,10 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
 
     elseif t == "input" then
         local current = ResolveMember("get", root, appName, path, handler, arg, opt)
-        local full = (opt.width == "full")
+        -- A multiline box always takes the full width with its name above
+        -- it: several lines of text next to a one-line label reads as a
+        -- misaligned mess, and AceConfigDialog lays it out the same way.
+        local full = (opt.width == "full") or (opt.multiline and true or false)
 
         if full then
             local label = CreateLabel(content, {
@@ -3045,14 +3193,16 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             local eb = CreateEditBox(content, {
                 value = current,
                 width = CONTENT_WIDTH,
+                multiline = opt.multiline,
                 onChange = function(v)
                     ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    AfterCommit()
                 end,
             })
             eb:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
             if desc then AttachTooltip(eb.box, desc) end
             AddWidget(eb)
-            yCursor = yCursor + ROW_HEIGHT + ROW_GAP
+            yCursor = yCursor + (eb.height or ROW_HEIGHT) + ROW_GAP
         else
             AddNameLabel()
             local eb = CreateEditBox(content, {
@@ -3060,6 +3210,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 width = CONTROL_WIDTH,
                 onChange = function(v)
                     ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    AfterCommit()
                 end,
             })
             eb:SetPoint("TOPLEFT", content, "TOPLEFT", LABEL_WIDTH + CONTROL_GAP, -yCursor)
@@ -3128,6 +3279,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 previewType = previewType,
                 onChange = function(v)
                     ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    AfterCommit()
                 end,
             })
             dd:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
@@ -3143,6 +3295,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 previewType = previewType,
                 onChange = function(v)
                     ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    AfterCommit()
                 end,
             })
             dd:SetPoint("TOPLEFT", content, "TOPLEFT", LABEL_WIDTH + CONTROL_GAP, -yCursor)
@@ -3163,6 +3316,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             onChange = function(v)
                 ResolveMember("set", root, appName, path, handler, arg, opt, v)
             end,
+            -- Deliberately NOT on onChange: that one fires for every
+            -- stepped value the thumb passes through.
+            onCommit = AfterCommit,
         })
         -- BUG FIXED (MINOR 7): CreateSlider's own editable-value box floats
         -- ABOVE its track (see CreateSlider) -- anchoring the track's own
@@ -3214,6 +3370,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                     handler[setter](handler, setInfo, color.r, color.g, color.b, color.a)
                 end
             end,
+            -- Deliberately NOT on onChange: that one fires continuously
+            -- while a marker is dragged around the colour square.
+            onCommit = AfterCommit,
         })
         cp:SetPoint("TOPLEFT", content, "TOPLEFT", LABEL_WIDTH + CONTROL_GAP, -yCursor + (ROW_HEIGHT - 16) / 2)
         if desc then AttachTooltip(cp.swatch, desc) end
@@ -3235,6 +3394,25 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 else
                     ResolveMember("set", root, appName, path, handler, arg, opt, true)
                 end
+
+                -- A button exists to CHANGE something, and the values
+                -- around it were read once, at render time. Without this
+                -- the change is invisible: an `execute` that fills in a
+                -- text field (ElvUI's "Generate Export"), flips a related
+                -- toggle or unlocks a `disabled` control left every other
+                -- widget on the page showing its pre-click value until
+                -- the page was navigated away from and back.
+                -- Re-rendering from inside a button's own onClick is the
+                -- same thing a tab click already does (see
+                -- RenderTabStrip) -- the widgets are recreated, not
+                -- mutated, so the button running this line is gone by
+                -- the time the handler returns, which is safe as long as
+                -- nothing touches it afterwards.
+                -- Called WITHOUT a `if RefreshOpenPage then` guard on
+                -- purpose: such a guard turns a wrongly-ordered forward
+                -- declaration into a dead button with no error at all,
+                -- which is exactly how this line failed once already.
+                RefreshOpenPage()
             end,
         })
         btn:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
@@ -3977,6 +4155,61 @@ FinishContentScroll = function() -- forward-declared local, assigned here
     end
 end
 
+-- Is this page's group still where it was when the page was built? A
+-- refresh can happen right after the options table itself changed -- an
+-- option's own Delete button removing the group it lives in is the normal
+-- case -- and the page table holds a DIRECT reference to a group that may
+-- by then be an orphan. Rendering that orphan would run its get/set
+-- closures against data the addon has already thrown away.
+local function PageStillExists(page)
+    local group = page.root
+    local i
+    for i = 1, table.getn(page.path) do
+        local args = group and group.args
+        group = (type(args) == "table") and args[page.path[i]] or nil
+        if type(group) ~= "table" then return false end
+    end
+    return group == page.group
+end
+
+local refreshingPage = false
+
+RefreshOpenPage = function() -- forward-declared local, assigned here
+    if not currentPage or refreshingPage then return end
+
+    -- Re-entrancy guard: re-rendering hides the widgets that are running
+    -- right now, and hiding a focused EditBox fires its focus-lost
+    -- handler, which commits a value, which can land back here.
+    refreshingPage = true
+
+    -- Walk up to the nearest page that still exists (see PageStillExists).
+    -- The parent chain was built by the same walk that produced this page,
+    -- so an ancestor is only ever missing if it was deleted too.
+    local page = currentPage
+    while page and not PageStillExists(page) do
+        page = page.parent
+    end
+
+    if page then
+        local samePage = (page == currentPage)
+        -- The offset is only worth keeping when the same page is being
+        -- redrawn; landing on a different page after a deletion should
+        -- start at its top. It has to be re-applied AFTER
+        -- FinishContentScroll, which recomputes the extent from the fresh
+        -- content and resets the scroll as part of that; SetContentScroll
+        -- then clamps against the NEW extent, so a page that got shorter
+        -- still lands somewhere valid.
+        local offset = contentOffset
+        activePageId = page.id
+        RenderContent(page)
+        RenderSidebar()
+        FinishContentScroll()
+        if samePage then SetContentScroll(offset, true) end
+    end
+
+    refreshingPage = false
+end
+
 SelectPage = function(page) -- forward-declared local, assigned here
     if not page then return end
     activePageId = page.id
@@ -4246,6 +4479,47 @@ end
 
 function lib:OpenToCategory(name)
     lib:Open(nil, name)
+end
+
+-- Redraws whatever page is open, so the window catches up with an options
+-- table that changed underneath it. AceConfigRegistry-3.0's NotifyChange
+-- is the same idea and the same name, so an options table written for
+-- AceConfigDialog can call this in the same places.
+--
+-- Needed whenever a `set`/`func` adds, removes or renames option entries
+-- rather than just storing a value -- a leaf that creates a new group, a
+-- Delete button. A control that only writes to the addon's own database
+-- does NOT need it: `execute` buttons already refresh on their own, and
+-- every other control redraws with its own page.
+--
+-- Deferred to the next frame and coalesced, exactly like
+-- AceConfigRegistry's notification is: its ConfigTableChanged parks a
+-- RefreshOnUpdate script rather than rebuilding on the spot, so a set that
+-- notifies several times -- or notifies while the widget that triggered it
+-- is still running -- costs one rebuild, after that widget is done.
+--
+-- `appName` is accepted for call-site compatibility and ignored: this
+-- library shows exactly one page at a time, and that page is what gets
+-- redrawn.
+local notifyDriver
+function lib:NotifyChange(appName)
+    if not (panel and panel:IsShown()) then return end
+
+    if not notifyDriver then
+        notifyDriver = CreateFrame("Frame", nil, UIParent)
+        notifyDriver:Hide()
+        notifyDriver:SetScript("OnUpdate", function()
+            -- Hidden first: an OnUpdate only runs while the frame is
+            -- shown, so this is both the disarm and the guard against
+            -- re-entering from whatever the refresh itself triggers.
+            notifyDriver:Hide()
+            if panel and panel:IsShown() then
+                RefreshOpenPage()
+            end
+        end)
+    end
+
+    notifyDriver:Show()
 end
 
 function lib:Close()
