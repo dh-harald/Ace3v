@@ -80,7 +80,8 @@ an error with the file/line prefix stripped.
 ### `Gratuity:NumLines([endln])`
 
 Number of lines currently in the tooltip. With `endln`, the result is clamped to it — so
-`NumLines(10)` on a 30-line tooltip returns `10`. Returns `0` when the tooltip is empty.
+`NumLines(10)` on a 30-line tooltip returns `10`. Returns `0` when the tooltip is empty. Trailing
+lines empty on both sides (`nil` or `""`) are not counted.
 
 ### `Gratuity:GetLine(line [, getright])`
 
@@ -129,7 +130,8 @@ local setName, have, total = Gratuity:FindDeformat(ITEM_SET_NAME)
 
 ### `Gratuity:GetText([startln [, endln [, ignoreleft [, ignoreright]]]])`
 
-Returns an array of `{left, right}` pairs for every non-empty line in range, or `nil` if none.
+Returns an array of `{left, right}` pairs for every non-empty line in range, or `nil` if none. A
+line whose sides are both `nil` or `""` counts as empty.
 `endln` defaults to `30` here and is **not** clamped by `NumLines`.
 
 ### `Gratuity:Erase()`
@@ -215,3 +217,13 @@ end
     client adds more when the content needs them, so `vars.Llines` / `vars.Rlines` resolve lines
     by name on first use. `GetText`, which walks to line 30 regardless of `NumLines`, and `Erase`
     skip lines that do not exist yet. The public API is unchanged.
+11. **`Erase` clears the left side too, and `NumLines` does not count trailing empty lines.**
+    Gratuity-2.0 cleared only the right side and relied on `ClearLines` for the rest. On Unreal
+    Azeroth, within one frame, `ClearLines` resets neither the tooltip's `NumLines` nor the left
+    text: a 9-line tooltip followed by a 7-line one in the same `/run` reported `NumLines` 9 both
+    times, with the first tooltip's lines 8–9 still readable. Over two `/run`s the count was 9, then
+    7 (measured in game). A caller scanning several items in one pass therefore read the tail of an
+    earlier, longer tooltip as part of a shorter one. The port empties both sides in `Erase`, and
+    `NumLines` (which `GetLine`, `Find` and `FindDeformat` go through) drops trailing lines empty
+    on both sides; a cleared font string reads `""` there, not `nil`. `GetText` skips such lines
+    as well. `MINOR` is 2, so this version replaces a MINOR 1 copy embedded by another addon.

@@ -8,7 +8,7 @@
 	Note: Ace3v port of Gratuity-2.0, API-compatible.
 ]]
 
-local MAJOR, MINOR = "LibGratuity-2.0", 1
+local MAJOR, MINOR = "LibGratuity-2.0", 2
 
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 
@@ -19,7 +19,7 @@ local strfind, strgsub, strfmt = string.find, string.gsub, string.format
 local tinsert = table.insert
 local type, pairs, pcall, error = type, pairs, pcall, error
 local setmetatable, rawset = setmetatable, rawset
-local _G = _G or getfenv()
+local _G = _G
 
 -- The scanning tooltip is built from GameTooltipTemplate and read through its
 -- named line globals (<name>TextLeftN / <name>TextRightN). On Unreal Azeroth a
@@ -85,10 +85,14 @@ end
 
 
 --	Clears the tooltip completely, none of this "erase left, hide right" crap blizzard does
+-- Ace3v: the left side is cleared too. On Unreal Azeroth ClearLines neither resets
+-- NumLines within a frame nor clears the left text, so without this a shorter
+-- tooltip loaded after a longer one in the same frame keeps its trailing lines.
 function lib:Erase()
 	self.vars.tooltip:ClearLines() -- Ensures tooltip's NumLines is reset
-	for i=1,30 do -- Clear text from right side (ClearLines only hides them)
-		local r = self.vars.Rlines[i]
+	for i=1,30 do -- Clear text from both sides (ClearLines only hides them)
+		local l, r = self.vars.Llines[i], self.vars.Rlines[i]
+		if l then l:SetText() end
 		if r then r:SetText() end
 	end
 	if not self.vars.tooltip:IsOwned(UIParent) then self.vars.tooltip:SetOwner(UIParent, "ANCHOR_NONE") end
@@ -96,11 +100,22 @@ function lib:Erase()
 end
 
 
+-- An empty line reads nil, or "" on Unreal Azeroth.
+local function isEmpty(fs)
+	local t = fs and fs:GetText()
+	return t == nil or t == ""
+end
+
 -- Get the number of lines
 -- Arg: endln - If passed and tooltip's NumLines is higher, endln is returned back
+-- Ace3v: trailing empty lines are not counted, since the tooltip's own NumLines
+-- can still include the lines Erase emptied.
 function lib:NumLines(endln)
-	local num = self.vars.tooltip:NumLines()
-	return endln and num > endln and endln or num or 0
+	local num = self.vars.tooltip:NumLines() or 0
+	while num > 0 and isEmpty(self.vars.Llines[num]) and isEmpty(self.vars.Rlines[num]) do
+		num = num - 1
+	end
+	return endln and num > endln and endln or num
 end
 
 local FindDefault = function(str, pattern)
@@ -192,7 +207,7 @@ function lib:GetText(startln, endln, ignoreleft, ignoreright)
 		local l, r = self.vars.Llines[i], self.vars.Rlines[i]
 		if not ignoreleft and l then txtl = l:GetText() end
 		if not ignoreright and r then txtr = r:GetText() end
-		if txtl or txtr then
+		if (txtl and txtl ~= "") or (txtr and txtr ~= "") then
 			if not retval then retval = {} end
 			tinsert(retval, {txtl, txtr})
 		end
@@ -208,7 +223,7 @@ end
 --    getright - if passed the right line will be returned, if not the left will be returned
 function lib:GetLine(line, getright)
 	argCheck(line, 2, "number")
-	if self.vars.tooltip:NumLines() < line then return end
+	if self:NumLines() < line then return end
 	if getright then return self.vars.Rlines[line] and self.vars.Rlines[line]:GetText()
 	elseif self.vars.Llines[line] then
 		return self.vars.Llines[line]:GetText(), self.vars.Rlines[line]:GetText()
