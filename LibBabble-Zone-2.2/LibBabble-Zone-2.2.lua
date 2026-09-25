@@ -13,7 +13,7 @@ Note: Ace3v port of Babble-Zone-2.2, API-compatible. The Ace2 original was an
       library that reproduces the instance API on top of AceLocale-3.0.
 ]]
 
-local MAJOR_VERSION, MINOR_VERSION = "LibBabble-Zone-2.2", 1
+local MAJOR_VERSION, MINOR_VERSION = "LibBabble-Zone-2.2", 2
 
 local BabbleZone = LibStub:NewLibrary(MAJOR_VERSION, MINOR_VERSION)
 
@@ -23,16 +23,11 @@ local AceLocale = LibStub("AceLocale-3.0")
 
 -- Ace3v: the original listed ["Battlegrounds"] twice, with the same value.
 
-local L = AceLocale:NewLocale(MAJOR_VERSION, "enUS", true)
+local L = AceLocale:NewLocale(MAJOR_VERSION, "enUS", true, true)
 if L then
 	L["Battlegrounds"] = true
-	L["Tower of Karazhan"] = true
 	L["The Black Morass"] = true
-	L["Upper Karazhan Halls"] = true
 	L["Dalaran"] = true
-	L["Caverns of Time: Black Morass"] = true
-	L["Moomoo Grove"] = true
-	L["Blood Ring"] = true
 	L["Ahn'Qiraj"] = true
 	L["Alterac Mountains"] = true
 	L["Alterac Valley"] = true
@@ -107,15 +102,6 @@ if L then
 	L["Scholomance"] = true
 	L["Searing Gorge"] = true
 	L["Shadowfang Keep"] = true
-	L["Hateforge Quarry"] = true
-	L["The Crescent Grove"] = true
-	L["Karazhan Crypt"] = true
-	L["Black Morass"] = true
-	L["Stormwind Vault"] = true
-	L["Gilneas City"] = true
-	L["Emerald Sanctum"] = true
-	L["Gilneas"] = true
-	L["Lower Karazhan Halls"] = true
 	L["Silithus"] = true
 	L["Silverpine Forest"] = true
 	L["The Stockade"] = true
@@ -147,7 +133,7 @@ if L then
 	L["Zul'Gurub"] = true
 end
 
-L = AceLocale:NewLocale(MAJOR_VERSION, "esES")
+L = AceLocale:NewLocale(MAJOR_VERSION, "esES", nil, true)
 if L then
 	L["Ahn'Qiraj"] = "Ahn'Qiraj"
 	L["Alterac Mountains"] = "Montañas de Alterac"
@@ -248,7 +234,7 @@ if L then
 	L["Zul'Gurub"] = "Zul'Gurub"
 end
 
-L = AceLocale:NewLocale(MAJOR_VERSION, "ruRU")
+L = AceLocale:NewLocale(MAJOR_VERSION, "ruRU", nil, true)
 if L then
 	L["Ahn'Qiraj"] = "Ан'Кираж"
 	L["Alterac Mountains"] = "Альтеракские горы"
@@ -348,9 +334,12 @@ if L then
 	L["Winterspring"] = "Зимние Ключи"
 	L["Zul'Farrak"] = "Зул'Фаррак"
 	L["Zul'Gurub"] = "Зул'Гуруб"
+	-- Ace3v: from the localized 1.12 AreaTable.dbc
+	L["The Black Morass"] = "Черные топи"
+	L["Dalaran"] = "Даларан"
 end
 
-L = AceLocale:NewLocale(MAJOR_VERSION, "deDE")
+L = AceLocale:NewLocale(MAJOR_VERSION, "deDE", nil, true)
 if L then
 	L["Ahn'Qiraj"] = "Ahn'Qiraj"
 	L["Alterac Mountains"] = "Alteracgebirge"
@@ -393,17 +382,17 @@ if L then
 	L["Gadgetzan"] = "Gadgetzan"
 	L["Gates of Ahn'Qiraj"] = "Tore von Ahn'Qiraj"
 	L["Gnomeregan"] = "Gnomeregan"
-	L["Grom'gol Base Camp"] = "Grom'gol Basis Lager"
-	L["The Great Sea"] = "Das grosse Meer"
+	L["Grom'gol Base Camp"] = "Das Basislager von Grom'gol"
+	L["The Great Sea"] = "Das große Meer"
 	L["Hall of Legends"] = "Halle der Legenden"
 	L["Hillsbrad Foothills"] = "Vorgebirge von Hillsbrad"
 	L["The Hinterlands"] = "Hinterland"
 	L["Hyjal"] = "Hyjal"
-	L["Ironforge"] = expansion and "Eisenschmiede" or "Ironforge"
+	L["Ironforge"] = "Ironforge" -- Ace3v: the original took "Eisenschmiede" on any Lua 5.1 client
 	L["Loch Modan"] = "Loch Modan"
 	L["Lower Blackrock Spire"] = "Untere Blockrockspitze"
 	L["Maraudon"] = "Maraudon"
-	L["Menethil Harbor"] = "Menethil Hafen"
+	L["Menethil Harbor"] = "Der Hafen von Menethil"
 	L["Molten Core"] = "Geschmolzener Kern"
 	L["Moonglade"] = "Moonglade"
 	L["Mulgore"] = "Mulgore"
@@ -416,7 +405,7 @@ if L then
 	L["Razorfen Kraul"] = "Der Kral von Razorfen"
 	L["Redridge Mountains"] = "Rotkammgebirge"
 	L["Ruins of Ahn'Qiraj"] = "Ruinen von Ahn'Qiraj"
-	L["Scarlet Monastery"] = "Das Scharlachrote Kloster"
+	L["Scarlet Monastery"] = "Das scharlachrote Kloster"
 	L["Scholomance"] = "Scholomance"
 	L["Searing Gorge"] = "Sengende Schlucht"
 	L["Shadowfang Keep"] = "Burg Shadowfang"
@@ -424,7 +413,7 @@ if L then
 	L["Silverpine Forest"] = "Silberwald"
 	L["The Stockade"] = "Das Verlies"
 	L["Stonetalon Mountains"] = "Steinkrallengebirge"
-	L["Stormwind City"] = expansion and "Sturmwind" or "Stormwind"
+	L["Stormwind City"] = "Stormwind" -- Ace3v: the original took "Sturmwind" on any Lua 5.1 client
 	L["Stranglethorn Vale"] = "Schlingendorntal"
 	L["Stratholme"] = "Stratholme"
 	L["Swamp of Sorrows"] = "S\195\188mpfe des Elends"
@@ -432,7 +421,7 @@ if L then
 	L["Teldrassil"] = "Teldrassil"
 	L["Temple of Ahn'Qiraj"] = "Tempel von Ahn'Qiraj"
 	L["The Temple of Atal'Hakkar"] = "Der Tempel von Atal'Hakkar"
-	L["Theramore Isle"] = "Insel Theramore"
+	L["Theramore Isle"] = "Die Insel Theramore"
 	L["Thousand Needles"] = "Tausend Nadeln"
 	L["Thunder Bluff"] = "Thunder Bluff"
 	L["Tirisfal Glades"] = "Tirisfal"
@@ -448,9 +437,11 @@ if L then
 	L["Winterspring"] = "Winterspring"
 	L["Zul'Farrak"] = "Zul'Farrak"
 	L["Zul'Gurub"] = "Zul'Gurub"
+	-- Ace3v: from the localized 1.12 AreaTable.dbc
+	L["The Black Morass"] = "Das schwarze Fenn"
 end
 
-L = AceLocale:NewLocale(MAJOR_VERSION, "frFR")
+L = AceLocale:NewLocale(MAJOR_VERSION, "frFR", nil, true)
 if L then
 	L["Ahn'Qiraj"] = "Ahn'Qiraj"
 	L["Alterac Mountains"] = "Montagnes d'Alterac"
@@ -472,7 +463,7 @@ if L then
 	L["Burning Steppes"] = "Steppes ardentes"
 	L["Darkshore"] = "Sombrivage (Darkshore)"
 	L["Darnassus"] = "Darnassus"
-	L["The Deadmines"] = "Les mortemines"
+	L["The Deadmines"] = "Les Mortemines"
 	L["Deadwind Pass"] = "D\195\169fil\195\169 de Deuillevent (Deadwind Pass)"
 	L["Deeprun Tram"] = "Tram des profondeurs"
 	L["Desolace"] = "D\195\169solace"
@@ -531,7 +522,7 @@ if L then
 	L["Tanaris"] = "Tanaris"
 	L["Teldrassil"] = "Teldrassil"
 	L["Temple of Ahn'Qiraj"] = "Le temple d'Ahn'Qiraj"
-	L["The Temple of Atal'Hakkar"] = "Le Temple d'Atal'Hakkar"
+	L["The Temple of Atal'Hakkar"] = "Le temple d'Atal'Hakkar"
 	L["Theramore Isle"] = "Ile de Theramore"
 	L["Thousand Needles"] = "Mille pointes (Thousand Needles)"
 	L["Thunder Bluff"] = "Thunder Bluff"
@@ -548,9 +539,11 @@ if L then
 	L["Winterspring"] = "Berceau-de-l'Hiver (Winterspring)"
 	L["Zul'Farrak"] = "Zul'Farrak"
 	L["Zul'Gurub"] = "Zul'Gurub"
+	-- Ace3v: from the localized 1.12 AreaTable.dbc
+	L["The Black Morass"] = "Le Noir Marécage"
 end
 
-L = AceLocale:NewLocale(MAJOR_VERSION, "zhCN")
+L = AceLocale:NewLocale(MAJOR_VERSION, "zhCN", nil, true)
 if L then
 	L["Ahn'Qiraj"] = "安其拉"
 	L["Alterac Mountains"] = "奥特兰克山脉"
@@ -598,7 +591,7 @@ if L then
 	L["Hall of Legends"] = "传说大厅"
 	L["Hillsbrad Foothills"] = "希尔斯布莱德丘陵"
 	L["The Hinterlands"] = "辛特兰"
-	L["Hyjal"] = "海加尔"
+	L["Hyjal"] = "海加尔山"
 	L["Ironforge"] = "铁炉堡"
 	L["Loch Modan"] = "洛克莫丹"
 	--L["Lower Blackrock Spire"] = true
@@ -622,7 +615,7 @@ if L then
 	L["Shadowfang Keep"] = "影牙城堡"
 	L["Silithus"] = "希利苏斯"
 	L["Silverpine Forest"] = "银松森林"
-	L["The Stockade"] = "暴风城监狱"
+	L["The Stockade"] = "监狱"
 	L["Stonetalon Mountains"] = "石爪山脉"
 	L["Stormwind City"] = "暴风城"
 	L["Stranglethorn Vale"] = "荆棘谷"
@@ -648,9 +641,12 @@ if L then
 	L["Winterspring"] = "冬泉谷"
 	L["Zul'Farrak"] = "祖尔法拉克"
 	L["Zul'Gurub"] = "祖尔格拉布"
+	-- Ace3v: from the localized 1.12 AreaTable.dbc
+	L["The Black Morass"] = "黑色沼泽"
+	L["Dalaran"] = "达拉然"
 end
 
-L = AceLocale:NewLocale(MAJOR_VERSION, "zhTW")
+L = AceLocale:NewLocale(MAJOR_VERSION, "zhTW", nil, true)
 if L then
 	L["Ahn'Qiraj"] = "安其拉"
 	L["Alterac Mountains"] = "奧特蘭克山脈"
@@ -750,7 +746,7 @@ if L then
 	L["Zul'Gurub"] = "祖爾格拉布"
 end
 
-L = AceLocale:NewLocale(MAJOR_VERSION, "koKR")
+L = AceLocale:NewLocale(MAJOR_VERSION, "koKR", nil, true)
 if L then
 	L["Ahn'Qiraj"] = "안퀴라즈"
 	L["Alterac Mountains"] = "알터랙 산맥"
@@ -762,7 +758,7 @@ if L then
 	L["Azshara"] = "아즈샤라"
 	L["Badlands"] = "황야의 땅"
 	L["The Barrens"] = "불모의 땅"
-	L["Blackfathom Deeps"] = "검은 심연의 나락"
+	L["Blackfathom Deeps"] = "검은심연의 나락"
 	L["Blackrock Depths"] = "검은바위 나락"
 	L["Blackrock Mountain"] = "검은바위 산"
 	L["Blackrock Spire"] = "검은바위 첨탑"
@@ -789,16 +785,16 @@ if L then
 	L["Everlook"] = "눈망루 마을"
 	L["Felwood"] = "악령의 숲"
 	L["Feralas"] = "페랄라스"
-	L["The Forbidding Sea"] = "성난폭풍 해안"
+	L["The Forbidding Sea"] = "성난 바다"
 	L["Gadgetzan"] = "가젯잔"
 	L["Gates of Ahn'Qiraj"] = "안퀴라즈 성문"
 	L["Gnomeregan"] = "놈리건"
 	L["The Great Sea"] = "대해"
 	L["Grom'gol Base Camp"] = "그롬골 주둔지"
-	L["Hall of Legends"] = "용사의 전당"
+	L["Hall of Legends"] = "전설의 전당"
 	L["Hillsbrad Foothills"] = "힐스브래드 구릉지"
 	L["The Hinterlands"] = "동부 내륙지"
-	L["Hyjal"] = "하이잘"
+	L["Hyjal"] = "하이잘 산"
 	L["Ironforge"] = "아이언포지"
 	L["Loch Modan"] = "모단 호수"
 	L["Lower Blackrock Spire"] = "검은바위 첨탑 하층"
@@ -811,18 +807,18 @@ if L then
 	L["Onyxia's Lair"] = "오닉시아의 둥지"
 	L["Orgrimmar"] = "오그리마"
 	L["Ratchet"] = "톱니항"
-	L["Ragefire Chasm"] = "성난 불길협곡"
-	L["Razorfen Downs"] = "가시덩쿨 구릉"
-	L["Razorfen Kraul"] = "가시덩쿨 우리"
+	L["Ragefire Chasm"] = "성난불길 협곡"
+	L["Razorfen Downs"] = "가시덩굴 구릉"
+	L["Razorfen Kraul"] = "가시덩굴 우리"
 	L["Redridge Mountains"] = "붉은마루 산맥"
 	L["Ruins of Ahn'Qiraj"] = "안퀴라즈 폐허"
-	L["Scarlet Monastery"] = "붉은 십자군 수도원"
+	L["Scarlet Monastery"] = "붉은십자군 수도원"
 	L["Scholomance"] = "스칼로맨스"
 	L["Searing Gorge"] = "이글거리는 협곡"
-	L["Shadowfang Keep"] = "그림자 송곳니 성채"
+	L["Shadowfang Keep"] = "그림자송곳니 성채"
 	L["Silithus"] = "실리더스"
 	L["Silverpine Forest"] = "은빛소나무 숲"
-	L["The Stockade"] = "지하감옥"
+	L["The Stockade"] = "스톰윈드 지하감옥"
 	L["Stonetalon Mountains"] = "돌발톱 산맥"
 	L["Stormwind City"] = "스톰윈드"
 	L["Stranglethorn Vale"] = "가시덤불 골짜기"
@@ -848,6 +844,9 @@ if L then
 	L["Winterspring"] = "여명의 설원"
 	L["Zul'Farrak"] = "줄파락"
 	L["Zul'Gurub"] = "줄구룹"
+	-- Ace3v: from the localized 1.12 AreaTable.dbc
+	L["The Black Morass"] = "검은늪"
+	L["Dalaran"] = "달라란"
 end
 
 local translations = AceLocale:GetLocale(MAJOR_VERSION)
@@ -861,15 +860,20 @@ for _, locale in ipairs({"enUS", "esES", "ruRU", "deDE", "frFR", "zhCN", "zhTW",
 	availableLocales[locale] = true
 end
 
-local gameLocale = GetLocale()
+local gameLocale = GAME_LOCALE or GetLocale()
 local currentLocale = availableLocales[gameLocale] and gameLocale or "enUS"
 
 local next, rawget, error, tostring = next, rawget, error, tostring
 
+-- Ace3v: should two zones ever share one localized name, the alphabetically
+-- first English name is kept, so both clients give the same answer.
 local function initReverse()
 	reverse = {}
 	for base, localized in next, translations do
-		reverse[localized] = base
+		local old = reverse[localized]
+		if not old or base < old then
+			reverse[localized] = base
+		end
 	end
 end
 
@@ -878,7 +882,7 @@ end
 ------------------------------------------------
 
 function BabbleZone:GetTranslation(text)
-	return translations[text]
+	return self[text]
 end
 
 function BabbleZone:GetStrictTranslation(text)
@@ -947,9 +951,21 @@ function BabbleZone:GetLibraryVersion()
 end
 
 -- Ace3v: what makes the library indexable, as `Z["Elwynn Forest"]`. Methods are
--- raw keys on BabbleZone itself, so they are found before this ever runs.
+-- raw keys on BabbleZone itself, so they are found before this ever runs. The
+-- lookup is raw, so a miss never adds a key that HasTranslation would then see.
+local warned = {}
 setmetatable(BabbleZone, {
-	__index = translations,
+	__index = function(self, key)
+		local value = rawget(translations, key)
+		if value == nil then
+			if not warned[key] then
+				warned[key] = true
+				geterrorhandler()(MAJOR_VERSION .. ": Translation \"" .. tostring(key) .. "\" does not exist.")
+			end
+			return key
+		end
+		return value
+	end,
 	__tostring = function(self)
 		return MAJOR_VERSION
 	end,

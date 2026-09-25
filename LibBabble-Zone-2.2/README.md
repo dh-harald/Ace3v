@@ -48,16 +48,46 @@ source language and the fallback.
 
 ## Locales
 
-Eight, unchanged from the original: **enUS, deDE, esES, frFR, ruRU, zhCN** (the six this project
-targets) plus zhTW and koKR, kept because the data was already there and costs nothing — 
-`AceLocale-3.0:NewLocale` returns `nil` for a locale the client is not running, so that block's table
-is never even built.
+Eight, as in the original: **enUS, deDE, esES, frFR, ruRU, zhCN** (the six this project targets)
+plus zhTW and koKR. `AceLocale-3.0:NewLocale` returns `nil` for a locale the client is not running,
+so the other blocks' tables are never built.
 
-enUS defines 120 keys; the other locales define 94–98 and fall back to English for the rest. Those
-gaps are **not** vanilla zones — they are TBC and beta names (`Dalaran`, `The Black Morass`, the four
-Karazhan variants), private-server custom zones this particular copy was extended with
-(`Hateforge Quarry`, `The Crescent Grove`, `Stormwind Vault`, `Emerald Sanctum`, `Gilneas`), the
-Scarlet Monastery wing labels, and the `Battlegrounds` category label.
+enUS has 106 keys; every other locale translates 96–100 of them and falls back to English for the
+rest — the English-only labels (`Battlegrounds`, the four `Scarlet Monastery (…)` wings,
+`The Sunken Temple`, which are addon conventions, not client strings), the continent names
+`Eastern Kingdoms` / `Kalimdor` (the client gives those through `GetMapContinents()`), and names
+that are the same word in that language.
+
+**The zone names are checked against the 1.12 client.** The VMaNGOS world database carries the
+localized `AreaTable.dbc` (`locales_area`, one row per area, joined to the English `area_template`
+by id; it has a row for each of the 1081 areas, so it reads as an automated extraction of the
+client files rather than hand transcription). Where it has a row for a name:
+
+| locale | agrees with the original | corrected | added |
+|---|---|---|---|
+| deDE | 83 | **5** | 1 |
+| frFR | 88 | 2 | 1 |
+| zhCN | 88 | 2 | 2 |
+| koKR | 74 | 10 | 2 |
+| ruRU | 89 | — (1 differs, kept) | 2 |
+| esES, zhTW | the database has no column for them | | |
+
+The corrections: deDE `Grom'gol Basis Lager` → `Das Basislager von Grom'gol`, `Menethil Hafen` →
+`Der Hafen von Menethil`, `Insel Theramore` → `Die Insel Theramore`, `Das grosse Meer` →
+`Das große Meer`, `Das Scharlachrote Kloster` → `Das scharlachrote Kloster`; frFR `Les mortemines` →
+`Les Mortemines`, `Le Temple d'Atal'Hakkar` → `Le temple d'Atal'Hakkar`; zhCN `Hyjal` 海加尔 → 海加尔山,
+`The Stockade` 暴风城监狱 → 监狱; koKR ten spacing and wording fixes. The later LibBabble-Zone-3.0 has
+the database's string exactly for 13 of those 19. The least certain are the three deDE names with
+an article (`Der Hafen von Menethil`, `Das Basislager von Grom'gol`, `Die Insel Theramore`): 3.0 has
+them without it, the original had a third form — only a German 1.12 client can settle those. Added: `The Black Morass` and `Dalaran` (both 1.12 areas) where
+the original had no entry. ruRU is only filled in, never corrected — vanilla had no Russian client,
+both sources are fan translations, and a Russian client presumably matches the original's.
+
+**The frFR names with the English name in brackets are genuine**: `Terres ingrates (Badlands)`,
+`Les Carmines (Redridge Mts)`, `Les Tarides (the Barrens)` and 20 more. The 1.12 French client's
+AreaTable has them exactly so, abbreviations included, and that is what `GetRealZoneText()` returns
+there. (The older Babble-Zone-2.0 and the later LibBabble-Zone-3.0 have them without brackets —
+other client versions.)
 
 **Every one of the 84 zone names `LibTourist-2.0` looks up is translated in all six target locales** —
 the test suite asserts this per locale, so the English fallback never shows up through Tourist.
@@ -143,13 +173,13 @@ local here = Z:HasReverseTranslation(GetRealZoneText())
    which made a missing translation a hard error — including for a key the *current locale* lacked
    even when English had it. AceLocale-3.0 has no strictness setting: a locale gap falls back to the
    English base string, and a completely unknown key produces a non-breaking error (via
-   `geterrorhandler()`) and returns the key. `SetStrictness` is kept as a no-op. This is the one
-   behavioural difference, and it is a **loosening** — code that worked keeps working, and code that
+   `geterrorhandler()`) and returns the key. `SetStrictness` is kept as a no-op. This is a
+   **loosening** — code that worked keeps working, and code that
    would have crashed now degrades to an English name instead. `GetStrictTranslation` is still there
    for callers that want the hard failure.
-   Consequence for `HasTranslation`: it now answers `true` for a key only English defines (22 to 26
-   keys, depending on locale), where the original answered false. All of them are TBC, beta or
-   custom-server names; none is used by Tourist.
+   Consequence for `HasTranslation`: it now answers `true` for a key only English defines (6 to 10
+   keys, depending on locale: the English-only labels, the continents, and names that are the same
+   word), where the original answered false. None is used by Tourist.
 5. **No cache-clearing frame.** AceLocale-2.2 created a frame and hooked `ADDON_LOADED` /
    `PLAYER_ENTERING_WORLD` to clear a per-instance lookup cache. The port does not cache lookups —
    `__index` points straight at the AceLocale-3.0 table — so there is nothing to invalidate and no
@@ -160,3 +190,23 @@ local here = Z:HasReverseTranslation(GetRealZoneText())
    caller does not blow up.
 7. **The duplicate `["Battlegrounds"]` entry is dropped.** The original's enUS table listed it twice
    with the same value — legal in a table constructor, but it reads as a mistake.
+8. **14 non-vanilla zones are removed** — TBC and beta names (`Tower of Karazhan`, `Upper Karazhan
+   Halls`, `Lower Karazhan Halls`, `Karazhan Crypt`, `Caverns of Time: Black Morass`,
+   `Black Morass`, `Moomoo Grove`, `Blood Ring`) and a private server's custom zones
+   (`Hateforge Quarry`, `The Crescent Grove`, `Stormwind Vault`, `Gilneas City`, `Gilneas`,
+   `Emerald Sanctum`). None is in a 1.12 AreaTable or Map row, none was translated, none is used by
+   Tourist. `Dalaran` and `The Black Morass` stay — they are 1.12 areas.
+9. **Locales corrected and completed from the 1.12 AreaTable.dbc**, see Locales. These change values
+   the original returned; the point is that the originals were not what the 1.12 client prints.
+10. **deDE `Ironforge` and `Stormwind City` no longer depend on the Lua version.** The original said
+    `expansion and "Eisenschmiede" or "Ironforge"` (and `"Sturmwind"` / `"Stormwind"`), where
+    `expansion` meant "running on Lua 5.1", i.e. TBC. Unreal Azeroth is a 1.12.1 client on Lua 5.1,
+    so the original would have given it the TBC names. (The first version of this port dropped the
+    `local expansion` line and so read a *global* `expansion` — nil in practice, but any addon
+    defining one would have flipped it.) Both are now the plain vanilla names.
+11. **Looking up an unknown zone no longer makes it known.** The first version of this port indexed
+    AceLocale-3.0's table directly, whose miss handler stores the key: after `Z["Typo"]`,
+    `HasTranslation("Typo")` said `true` and the reverse map, if built later, contained it. The
+    lookup is raw now; an unknown zone still returns its name with one non-breaking error.
+12. **`GetLocale` honours `GAME_LOCALE`**, as AceLocale-3.0 does, and a reverse lookup of a name two
+    zones share would return the alphabetically first English name (no such name exists today).
