@@ -119,7 +119,7 @@ A **node** is a table from `data.lua`, extended by `Startup`:
 
 | Signature | Does |
 |---|---|
-| `LibTaxi:ScanTaxiMap()` | read the open flight map: mark every node known or unknown, record the names it shows, mark the continent seen. Runs by itself on `TAXIMAP_OPENED` |
+| `LibTaxi:ScanTaxiMap()` | read the open flight map: mark every node with a path known and every other node not already known unknown, record the names it shows, mark the continent seen. Runs by itself on `TAXIMAP_OPENED` |
 | `LibTaxi:GetTaxiDataBySlot()` | `taxidata, taxidata_by_slot` — one entry per slot of the open map: `name`, `slotIndex`, `state`, `taxitype`, `position = {x, y}`, `taxitag` |
 | `LibTaxi.FlightPathState` | `{ Current = 0, Reachable = 1, Unreachable = 2 }`, the `state` values |
 
@@ -285,6 +285,16 @@ end)
     data only ever sets `taxioperator`; with the vanilla data both are `nil`, so every unseen node
     is falsified as intended. Enemy-faction flight points are **not** pruned from the data, which
     is what the original did too (its `enemyfac` was the string `"DON'T PRUNE"`).
+20. **`"DISTANT"` is a known flight point, and a scan never forgets one.** The Classic original
+    counts every node that is neither `"CURRENT"` nor `"REACHABLE"` as unknown, which is right on
+    the Classic client, where undiscovered nodes are listed as `"DISTANT"`. Neither target client
+    lists a node the character does not know (measured at Orgrimmar on both; Unreal Azeroth's API
+    documentation says the same of `NumTaxiNodes`). 1.12.1 answers `"REACHABLE"` for all of them;
+    Unreal Azeroth answers `"DISTANT"` for a known one that needs a change of flight (Ratchet and
+    Camp Taurajo, through Crossroads) and, by its documentation, `"NONE"` for a known one with no
+    path. The original turned the first back to unknown, and LibRover-1.0 then walked the character
+    there. `GetTaxiDataBySlot` now maps `"DISTANT"` to reachable, and `ScanTaxiMap` lets a `"NONE"`
+    node become unknown only when it is not known already.
 
 ## Licence
 

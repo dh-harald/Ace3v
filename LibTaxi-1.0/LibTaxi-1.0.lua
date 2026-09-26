@@ -7,7 +7,7 @@ Dependencies: LibStub, CallbackHandler-1.0, AceEvent-3.0, LibHereBeDragons-1.0
 License: Free for non-commercial use, except for Zygor Guides.
 ]]
 
-local MAJOR_VERSION, MINOR_VERSION = "LibTaxi-1.0", 2
+local MAJOR_VERSION, MINOR_VERSION = "LibTaxi-1.0", 3
 
 assert(LibStub, MAJOR_VERSION .. " requires LibStub")
 
@@ -590,10 +590,13 @@ function Lib:GetTaxiDataBySlot()
 	for i = 1, NumTaxiNodes() do
 		local x, y = TaxiNodePosition(i)
 		local taxitype = TaxiNodeGetType(i)
+		-- Neither client lists a flight point the character does not know. 1.12.1 answers
+		-- "REACHABLE" for every other one, Unreal Azeroth "DISTANT" for one that needs a change of
+		-- flight and "NONE" for one with no path from here.
 		taxidata[i] = {
 			name = TaxiNodeName(i),
 			slotIndex = i,
-			state = (taxitype == "CURRENT" and 0) or (taxitype == "REACHABLE" and 1) or 2,
+			state = (taxitype == "CURRENT" and 0) or (taxitype == "NONE" and 2) or 1,
 			taxitype = taxitype,
 			position = { x = x, y = y },
 			taxitag = SlotTag(cont, x, y),
@@ -651,9 +654,11 @@ function Lib:ScanTaxiMap()
 
 		if taxinode then
 			if taxinode.taxioperator == current_operator then
+				-- A flight point is never forgotten: a node with no path from here only becomes
+				-- unknown when it is not known already.
 				local known = taxi.state ~= STATE_UNREACHABLE
-				Lib:LearnTaxi(taxinode, known)
-				Lib:Debug("%s taxi: %s [%s, by %s]", known and "Known" or "Unknown",
+				if known or not taxinode.known then Lib:LearnTaxi(taxinode, known) end
+				Lib:Debug("%s taxi: %s [%s, by %s]", known and "Known" or "Unreachable",
 					name, tostring(taxi.taxitag), matchedby)
 			end
 			taxinode.localname = taxinode.localname or name
