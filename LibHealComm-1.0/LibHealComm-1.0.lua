@@ -11,7 +11,7 @@ Note: Ace3v port of HealComm-1.0, API-compatible. The addon-channel protocol is
       byte-identical to the Ace2 original so the two interoperate in one raid.
 ]]
 
-local MAJOR, MINOR = "LibHealComm-1.0", 2
+local MAJOR, MINOR = "LibHealComm-1.0", 3
 
 local HealComm, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 
@@ -1848,6 +1848,23 @@ function HealComm:TriggerRegrowthHot()
 end
 
 function HealComm:SPELLCAST_STOP()
+	-- The own direct heal ends with the cast. The cast-time timer set at SPELLCAST_START expires
+	-- slightly after SPELLCAST_STOP (~0.1 s on Unreal Azeroth), and until then the landed heal
+	-- would be counted twice: once in the unit's health and once more as incoming. The heal is
+	-- dropped here and Healstop / GrpHealstop is sent, so the other clients drop it now too instead
+	-- of on their own timer, which started when the Heal message arrived and so runs later still
+	-- (LibHealComm-4.0 sends its stop message on a completed cast the same way). Both messages
+	-- already exist in the protocol for interrupts, so Ace2 HealComm-1.0 clients understand them.
+	-- The timer stays in place for casters that do not send a stop on a completed cast.
+	local me = UnitName("player")
+	if self.Lookup[me] then
+		self:SendAddonMessage("Healstop")
+		self:stopHeal(me)
+	end
+	if self.GrpHeals[me] then
+		self:SendAddonMessage("GrpHealstop")
+		self:stopGrpHeal(me)
+	end
 	if not self.SpellCastInfo then return end
 	local targetUnit = roster:GetUnitIDFromName(self.SpellCastInfo[3])
 	if targetUnit then
@@ -1895,7 +1912,8 @@ function HealComm:CHAT_MSG_ADDON()
 		local result = strsplit(arg2,"/")
 		if result[1] == "Heal" then
 			self:startHeal(arg4, result[2], result[3], result[4])
-		elseif arg2 == "Healstop" then
+		elseif arg2 == "Healstop" or arg2 == "HealStop" then
+			-- "HealStop" is what pfUI's libpredict sends on an interrupted heal; it means the same.
 			self:stopHeal(arg4)
 		elseif result[1] == "Healdelay" then
 			self:delayHeal(arg4, result[2])
