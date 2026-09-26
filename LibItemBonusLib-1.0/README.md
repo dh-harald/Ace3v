@@ -37,6 +37,10 @@ LibGratuity-2.0\LibGratuity-2.0.xml
 LibItemBonusLib-1.0\LibItemBonusLib-1.0.xml
 ```
 
+`CallbackHandler-1.0` must be **MINOR 7 or later** (the one in this repository), which fires like
+upstream Ace3: `Fire(event, ...)`. With the older vanilla backport (MINOR 6, `Fire(event, argc, ...)`)
+every callback payload would arrive shifted by one.
+
 `LibItemBonusLib-1.0.xml` already loads the six locale files in the right order (enUS first, as
 the default), so including it is enough.
 

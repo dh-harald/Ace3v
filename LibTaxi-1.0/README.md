@@ -25,6 +25,10 @@ LibHereBeDragons-1.0\LibHereBeDragons-1.0.xml
 LibTaxi-1.0\LibTaxi-1.0.xml
 ```
 
+`CallbackHandler-1.0` must be **MINOR 7 or later** (the one in this repository), which fires like
+upstream Ace3: `Fire(event, ...)`. With the older vanilla backport (MINOR 6, `Fire(event, argc, ...)`)
+every callback payload would arrive shifted by one.
+
 All four are **hard** dependencies. `LibBabble-Zone-2.2` is optional and only affects
 LibHereBeDragons-1.0's localized zone names, which this library uses for `LastTaxi.zone`.
 

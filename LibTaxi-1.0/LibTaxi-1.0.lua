@@ -7,7 +7,7 @@ Dependencies: LibStub, CallbackHandler-1.0, AceEvent-3.0, LibHereBeDragons-1.0
 License: Free for non-commercial use, except for Zygor Guides.
 ]]
 
-local MAJOR_VERSION, MINOR_VERSION = "LibTaxi-1.0", 1
+local MAJOR_VERSION, MINOR_VERSION = "LibTaxi-1.0", 2
 
 assert(LibStub, MAJOR_VERSION .. " requires LibStub")
 
@@ -61,8 +61,8 @@ end
 function Lib:Debug(s, ...)
 	if not Lib.debug then return end
 	local msg = s
-	if tgetn(arg) > 0 then
-		local ok, formatted = pcall(format, s, unpack(arg))
+	if arg.n > 0 then
+		local ok, formatted = pcall(format, s, unpack(arg, 1, arg.n))
 		msg = ok and formatted or s
 	end
 	if Lib.debugfunc then
@@ -668,7 +668,7 @@ function Lib:ScanTaxiMap()
 
 	Lib:MarkContinentSeen(cont, current_operator)
 	Lib:CacheTaxiPoints()
-	Lib:SendMessage("LibTaxi_KnowledgeChanged", 0)
+	Lib:SendMessage("LibTaxi_KnowledgeChanged")
 end
 
 --[[================ TAKING A TAXI ===============]]--
@@ -723,7 +723,7 @@ function Lib:RecordTakenTaxi(destIndex)
 	last.departure = GetTime()
 	Lib:Debug("TakeTaxiNode proxy, flying to %s (%s), eta %s",
 		tostring(data.name), tostring(data.taxitag), tostring(time))
-	Lib:SendMessage("LibTaxi_TaxiTaken", 1, last)
+	Lib:SendMessage("LibTaxi_TaxiTaken", last)
 end
 
 --[[================ TRIP TIMES ===============]]--
@@ -779,7 +779,7 @@ end
 function Lib:UI_INFO_MESSAGE()
 	if arg1 == ERR_NEWTAXIPATH then
 		local node = Lib:LearnCurrentTaxi()
-		Lib:SendMessage("LibTaxi_KnowledgeChanged", 0)
+		Lib:SendMessage("LibTaxi_KnowledgeChanged")
 		return node
 	end
 end
@@ -788,7 +788,7 @@ function Lib:UI_ERROR_MESSAGE()
 	if arg1 == ERR_TAXINOPATHS then
 		local node = Lib:LearnCurrentTaxi()
 		Lib:MarkNeightboursUnknown(node)
-		Lib:SendMessage("LibTaxi_KnowledgeChanged", 0)
+		Lib:SendMessage("LibTaxi_KnowledgeChanged")
 		return node
 	end
 end

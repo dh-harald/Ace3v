@@ -27,6 +27,10 @@ LibTaxi-1.0\LibTaxi-1.0.xml
 LibRover-1.0\LibRover-1.0.xml
 ```
 
+`CallbackHandler-1.0` must be **MINOR 7 or later** (the one in this repository), which fires like
+upstream Ace3: `Fire(event, ...)`. With the older vanilla backport (MINOR 6, `Fire(event, argc, ...)`)
+every callback payload would arrive shifted by one.
+
 All are **hard** dependencies. `LibTaxi-1.0` must have been started (`LibTaxi:Startup(savedTable)`)
 before LibRover's startup runs, because LibRover reads its flight points and their costs.
 `LibBabble-Zone-2.2` is optional and only affects the localized zone names in leg texts, through

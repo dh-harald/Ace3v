@@ -6,16 +6,25 @@
 --
 
 local DBICON10 = "LibDBIcon-1.0"
-local DBICON10_MINOR = 44 -- Bump on changes
+local DBICON10_MINOR = 45 -- Bump on changes
 if not LibStub then error(DBICON10 .. " requires LibStub.") end
 local ldb = LibStub("LibDataBroker-1.1", true)
 if not ldb then error(DBICON10 .. " requires LibDataBroker-1.1.") end
-local lib = LibStub:NewLibrary(DBICON10, DBICON10_MINOR)
+local lib, oldminor = LibStub:NewLibrary(DBICON10, DBICON10_MINOR)
 if not lib then return end
 
 LibStub("AceHook-3.0"):Embed(lib)
 lib.objects = lib.objects or {}
 lib.callbackRegistered = lib.callbackRegistered or nil
+-- Vanilla: MINOR 44 fired with an argument count, Fire(event, argc, ...), and its registry may have been
+-- built by a CallbackHandler with that Fire. Rebuild it, keeping the registrations.
+if oldminor and oldminor < 45 and lib.callbacks then
+	local old = lib.callbacks
+	lib.callbacks = LibStub("CallbackHandler-1.0"):New(lib)
+	for event, handlers in pairs(old.events) do
+		for owner, func in pairs(handlers) do lib.callbacks.events[event][owner] = func end
+	end
+end
 lib.callbacks = lib.callbacks or LibStub("CallbackHandler-1.0"):New(lib)
 lib.notCreated = lib.notCreated or {}
 lib.radius = lib.radius or 5
@@ -604,7 +613,7 @@ local function createButton(name, object, db)
 			button:Hide()
 		end
 	end
-	lib.callbacks:Fire("LibDBIcon_IconCreated", 2, button, name) -- Fire 'Icon Created' callback
+	lib.callbacks:Fire("LibDBIcon_IconCreated", button, name) -- Fire 'Icon Created' callback
 end
 
 -- We could use a metatable.__index on lib.objects, but then we'd create

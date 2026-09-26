@@ -28,10 +28,10 @@ Runs on Lua 5.0 (vanilla 1.12.1) and Lua 5.1 (Unreal Azeroth).
 ## Dependencies
 
 - [LibStub](https://www.wowace.com/projects/libstub)
-- **CallbackHandler-1.0, vanilla Ace3 backport** (the one started by zerosnake0
-  and fixed by laytya). That backport's `Fire` takes an explicit argument
-  count, `Fire(event, argc, a1, ...)`, and this library calls it in that form.
-  The modern upstream CallbackHandler-1.0 is **not** compatible.
+- **CallbackHandler-1.0, MINOR 7 or later.** It fires like upstream Ace3,
+  `Fire(event, a1, ...)`, and so does this library since MINOR 2. MINOR 1
+  called the older vanilla backport's form with an explicit argument count,
+  `Fire(event, argc, a1, ...)` (CallbackHandler MINOR 6, zerosnake0/laytya).
 
 Load both before this library.
 

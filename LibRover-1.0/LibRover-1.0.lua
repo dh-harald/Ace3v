@@ -8,7 +8,7 @@ Dependencies: LibStub, CallbackHandler-1.0, AceEvent-3.0, AceTimer-3.0, LibTaxi-
 License: MIT
 ]]
 
-local MAJOR_VERSION, MINOR_VERSION = "LibRover-1.0", 1
+local MAJOR_VERSION, MINOR_VERSION = "LibRover-1.0", 2
 
 assert(LibStub, MAJOR_VERSION .. " requires LibStub")
 
@@ -178,8 +178,8 @@ end
 function Lib:Debug(s, ...)
 	if not Lib.debug then return end
 	local msg = s
-	if tgetn(arg) > 0 then
-		local ok, formatted = pcall(strformat, s, unpack(arg))
+	if arg.n > 0 then
+		local ok, formatted = pcall(strformat, s, unpack(arg, 1, arg.n))
 		msg = ok and formatted or s
 	end
 	if Lib.debugfunc then Lib.debugfunc(msg)
@@ -1141,7 +1141,7 @@ function Lib:StartupStep(timeleft)
 			Lib.init_progress = 1
 			Lib.ready = true
 			Lib:Debug("Startup complete: %d nodes.", tgetn(allnodes))
-			Lib:SendMessage("LIBROVER_READY", 0)
+			Lib:SendMessage("LIBROVER_READY")
 			if Lib.find_after_load then
 				local a = Lib.find_after_load
 				Lib.find_after_load = nil
@@ -2046,7 +2046,7 @@ function Lib:ReportPath(endnode)
 		Lib.PathFoundHandler("success", results, returnData)
 	end
 
-	Lib:SendMessage("LIBROVER_TRAVEL_REPORTED", 0)
+	Lib:SendMessage("LIBROVER_TRAVEL_REPORTED")
 	Lib.pathfinding_speed_override = nil
 end
 

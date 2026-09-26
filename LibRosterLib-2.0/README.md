@@ -34,6 +34,10 @@ AceTimer-3.0\AceTimer-3.0.xml
 LibRosterLib-2.0\LibRosterLib-2.0.xml
 ```
 
+`CallbackHandler-1.0` must be **MINOR 7 or later** (the one in this repository), which fires like
+upstream Ace3: `Fire(event, ...)`. With the older vanilla backport (MINOR 6, `Fire(event, argc, ...)`)
+every callback payload would arrive shifted by one.
+
 | Dependency | Used for |
 |---|---|
 | LibStub | registration |
@@ -140,13 +144,10 @@ oldsubgroup, oldrank, oldonline`.
 
 **The table is recycled immediately after the per-unit events fire — copy anything you need.**
 
-### `RosterLib_UnitChanged(event, unitid, name, class, subgroup, rank, oldname, oldunitid, oldclass, oldsubgroup)`
+### `RosterLib_UnitChanged(event, unitid, name, class, subgroup, rank, oldname, oldunitid, oldclass, oldsubgroup, oldrank)`
 
 Fired once per changed unit. The `old*` values are `nil` for a member who just joined; for a member
 who left, the new values are `nil` and the `old*` values describe them.
-
-`oldrank` is **not** among the arguments — see the differences section. Read it from
-`RosterLib_RosterChanged`'s table if you need it.
 
 ## Example
 
@@ -180,12 +181,10 @@ end
    `self:RegisterEvent("RosterLib_UnitChanged", "Handler")`, now write
    `roster.RegisterCallback(self, "RosterLib_UnitChanged", "Handler")`, and the handler gains a
    leading `event` parameter. The event names themselves are unchanged.
-4. **`RosterLib_UnitChanged` carries 9 arguments, not 10 — `oldrank` is dropped.** This is a limit
-   of the vanilla CallbackHandler: its dispatcher is generated with ten value slots, and the event
-   name occupies one, so the tenth payload argument cannot be delivered. Upstream Ace3 has no such
-   limit because it uses real varargs, which Lua 5.0 lacks. The port passes `argc = 9` explicitly
-   rather than letting the argument be truncated silently. **`oldrank` is still available** from the
-   `updatedUnits` table that `RosterLib_RosterChanged` fires immediately beforehand.
+4. **`RosterLib_UnitChanged` carries all 10 arguments, `oldrank` included** (since MINOR 2). MINOR 1
+   dropped `oldrank`, because the vanilla CallbackHandler it was built for (MINOR 6, with an explicit
+   argument count) could deliver only 9. It needs CallbackHandler-1.0 MINOR 7 or later, which fires
+   like upstream Ace3: `Fire(event, ...)`, no argument count, no limit.
 5. **`online` is a real boolean.** RosterLib-2.0 stored the raw `UnitIsConnected` return, which is
    `1`/`nil` on one 1.12.1 client and `true`/`false` on another. The port normalises it, so an
    offline member now reads `online == false` rather than `nil`. Truthiness tests are unaffected.

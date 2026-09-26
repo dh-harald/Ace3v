@@ -11,9 +11,9 @@ Note: Ace3v port of HealComm-1.0, API-compatible. The addon-channel protocol is
       byte-identical to the Ace2 original so the two interoperate in one raid.
 ]]
 
-local MAJOR, MINOR = "LibHealComm-1.0", 1
+local MAJOR, MINOR = "LibHealComm-1.0", 2
 
-local HealComm = LibStub:NewLibrary(MAJOR, MINOR)
+local HealComm, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 
 if not HealComm then return end -- No upgrade needed
 
@@ -21,6 +21,15 @@ local AceCore = LibStub("AceCore-3.0")
 LibStub("AceEvent-3.0"):Embed(HealComm)
 LibStub("AceTimer-3.0"):Embed(HealComm)
 HealComm.hooks = HealComm.hooks or {}
+-- Vanilla: MINOR 1 fired with an argument count, Fire(event, argc, ...), and its registry may have been
+-- built by a CallbackHandler with that Fire. Rebuild it, keeping the registrations.
+if oldminor and oldminor < 2 and HealComm.callbacks then
+	local old = HealComm.callbacks
+	HealComm.callbacks = LibStub("CallbackHandler-1.0"):New(HealComm)
+	for event, handlers in pairs(old.events) do
+		for owner, func in pairs(handlers) do HealComm.callbacks.events[event][owner] = func end
+	end
+end
 HealComm.callbacks = HealComm.callbacks or LibStub("CallbackHandler-1.0"):New(HealComm)
 
 local roster = LibStub("LibRosterLib-2.0")
@@ -1647,7 +1656,7 @@ function HealComm:UNIT_HEALTH()
 		for k,v in pairs(self.pendingResurrections[name]) do
 			self.pendingResurrections[name][k] = nil
 		end
-		self.callbacks:Fire("HealComm_Ressupdate", 1,name)
+		self.callbacks:Fire("HealComm_Ressupdate", name)
 	end
 end
 			
@@ -1657,7 +1666,7 @@ function HealComm:stopHeal(caster)
 	end
 	if self.Lookup[caster] then
 		self.Heals[self.Lookup[caster]][caster] = nil
-		self.callbacks:Fire("HealComm_Healupdate", 1,self.Lookup[caster])
+		self.callbacks:Fire("HealComm_Healupdate", self.Lookup[caster])
 		self.Lookup[caster] = nil
 	end
 end
@@ -1673,7 +1682,7 @@ function HealComm:startHeal(caster, target, size, casttime)
 	end
 	self.Heals[target][caster] = {amount = math.floor(size), ctime = (casttime/1000)+GetTime()}
 	self.Lookup[caster] = target
-	self.callbacks:Fire("HealComm_Healupdate", 1,target)
+	self.callbacks:Fire("HealComm_Healupdate", target)
 end
 
 function HealComm:delayHeal(caster, delay)
@@ -1688,7 +1697,7 @@ function HealComm:startGrpHeal(caster, size, casttime, party1, party2, party3, p
 	schedule(self, "Healcomm_"..caster, self.stopGrpHeal, (casttime/1000), 2, self, caster)
 	self.GrpHeals[caster] = {amount = math.floor(size), ctime = (casttime/1000)+GetTime(), targets = {party1, party2, party3, party4, party5}}
 	for i=1,tgetn(self.GrpHeals[caster].targets) do
-		self.callbacks:Fire("HealComm_Healupdate", 1,self.GrpHeals[caster].targets[i])
+		self.callbacks:Fire("HealComm_Healupdate", self.GrpHeals[caster].targets[i])
 	end
 end
 
@@ -1703,7 +1712,7 @@ function HealComm:stopGrpHeal(caster)
 	self.GrpHeals[caster] = nil
 	if targets then
 		for i=1,tgetn(targets) do
-			self.callbacks:Fire("HealComm_Healupdate", 1,targets[i])
+			self.callbacks:Fire("HealComm_Healupdate", targets[i])
 		end
 	end
 end
@@ -1722,21 +1731,21 @@ function HealComm:startResurrection(caster, target)
 	end
 	self.pendingResurrections[target][caster] = GetTime()+70
 	schedule(self, "Healcomm_"..caster..target, self.RessExpire, 70, 3, self, caster, target)
-	self.callbacks:Fire("HealComm_Ressupdate", 1,target)
+	self.callbacks:Fire("HealComm_Ressupdate", target)
 end
 
 function HealComm:cancelResurrection(caster)
 	for k,v in pairs(self.pendingResurrections) do
 		if v[caster] and (v[caster]-GetTime()) > 60 then
 			self.pendingResurrections[k][caster] = nil
-			self.callbacks:Fire("HealComm_Ressupdate", 1,k)
+			self.callbacks:Fire("HealComm_Ressupdate", k)
 		end
 	end
 end
 
 function HealComm:RessExpire(caster, target)
 	self.pendingResurrections[target][caster] = nil
-	self.callbacks:Fire("HealComm_Ressupdate", 1,target)
+	self.callbacks:Fire("HealComm_Ressupdate", target)
 end
 
 -- Outside a raid the message goes to PARTY explicitly: the 1.12.1 client
@@ -1835,7 +1844,7 @@ function HealComm:TriggerRegrowthHot()
 	self.Hots[self.savetarget]["Regr"].start = GetTime()
 	self.Hots[self.savetarget]["Regr"].dur = dur
 	recordOwnHot(self, self.savetarget, "Regr", L["Regrowth"], self.saverank, self.savepower, self.savemod)
-	self.callbacks:Fire("HealComm_Hotupdate", 2,roster:GetUnitIDFromName(self.savetarget), "Regrowth")
+	self.callbacks:Fire("HealComm_Hotupdate", roster:GetUnitIDFromName(self.savetarget), "Regrowth")
 end
 
 function HealComm:SPELLCAST_STOP()
@@ -1854,7 +1863,7 @@ function HealComm:SPELLCAST_STOP()
 			self.Hots[self.SpellCastInfo[3]]["Renew"].start = GetTime()
 			self.Hots[self.SpellCastInfo[3]]["Renew"].dur = dur
 			recordOwnHot(self, self.SpellCastInfo[3], "Renew", L["Renew"], self.SpellCastInfo[2], self.SpellCastInfo[4], self.SpellCastInfo[5])
-			self.callbacks:Fire("HealComm_Hotupdate", 2,targetUnit, "Renew")
+			self.callbacks:Fire("HealComm_Hotupdate", targetUnit, "Renew")
 		elseif self.SpellCastInfo[1] == L["Rejuvenation"] then
 			local dur = getSetBonus() and 15 or 12
 			self:SendAddonMessage("Reju/"..self.SpellCastInfo[3].."/"..dur.."/")
@@ -1867,7 +1876,7 @@ function HealComm:SPELLCAST_STOP()
 			self.Hots[self.SpellCastInfo[3]]["Reju"].start = GetTime()
 			self.Hots[self.SpellCastInfo[3]]["Reju"].dur = dur
 			recordOwnHot(self, self.SpellCastInfo[3], "Reju", L["Rejuvenation"], self.SpellCastInfo[2], self.SpellCastInfo[4], self.SpellCastInfo[5])
-			self.callbacks:Fire("HealComm_Hotupdate", 2,targetUnit, "Rejuvenation")
+			self.callbacks:Fire("HealComm_Hotupdate", targetUnit, "Rejuvenation")
 		elseif self.SpellCastInfo[1] == L["Regrowth"] then
 			self.savetarget = self.SpellCastInfo[3]
 			self.saverank, self.savepower, self.savemod = self.SpellCastInfo[2], self.SpellCastInfo[4], self.SpellCastInfo[5]
@@ -1911,7 +1920,7 @@ function HealComm:CHAT_MSG_ADDON()
 			self.Hots[result[2]]["Renew"].start = GetTime()
 			estimateHot(self, result[2], "Renew", L["Renew"], arg4)
 			local targetUnit = roster:GetUnitIDFromName(result[2])
-			self.callbacks:Fire("HealComm_Hotupdate", 2,targetUnit, "Renew")
+			self.callbacks:Fire("HealComm_Hotupdate", targetUnit, "Renew")
 		elseif result[1] == "Reju" then
 			if not self.Hots[result[2]] then
 				self.Hots[result[2]] = {}
@@ -1923,7 +1932,7 @@ function HealComm:CHAT_MSG_ADDON()
 			self.Hots[result[2]]["Reju"].start = GetTime()
 			estimateHot(self, result[2], "Reju", L["Rejuvenation"], arg4)
 			local targetUnit = roster:GetUnitIDFromName(result[2])
-			self.callbacks:Fire("HealComm_Hotupdate", 2,targetUnit, "Rejuvenation")
+			self.callbacks:Fire("HealComm_Hotupdate", targetUnit, "Rejuvenation")
 		elseif result[1] == "Regr" then
 			if not self.Hots[result[2]] then
 				self.Hots[result[2]] = {}
@@ -1935,7 +1944,7 @@ function HealComm:CHAT_MSG_ADDON()
 			self.Hots[result[2]]["Regr"].start = GetTime()
 			estimateHot(self, result[2], "Regr", L["Regrowth"], arg4)
 			local targetUnit = roster:GetUnitIDFromName(result[2])
-			self.callbacks:Fire("HealComm_Hotupdate", 2,targetUnit, "Regrowth")
+			self.callbacks:Fire("HealComm_Hotupdate", targetUnit, "Regrowth")
 		end
 	end
 end
@@ -1981,7 +1990,7 @@ function HealComm:HotTickMessage()
 	local ticks = math.floor((now - hot.start) / hot.interval + 0.5)
 	if ticks < 1 then ticks = 1 end
 	hot.start = now - ticks * hot.interval
-	self.callbacks:Fire("HealComm_Hotupdate", 2, roster:GetUnitIDFromName(target), spell)
+	self.callbacks:Fire("HealComm_Hotupdate", roster:GetUnitIDFromName(target), spell)
 end
 
 function HealComm:UNIT_AURA()
@@ -2003,15 +2012,15 @@ function HealComm:UNIT_AURA()
 		-- was recorded and is gone fires now.
 		if not regr and self.Hots[name]["Regr"] then
 			self.Hots[name]["Regr"] = nil
-			self.callbacks:Fire("HealComm_Hotupdate", 2,arg1, "Regrowth")
+			self.callbacks:Fire("HealComm_Hotupdate", arg1, "Regrowth")
 		end
 		if not reju and self.Hots[name]["Reju"] then
 			self.Hots[name]["Reju"] = nil
-			self.callbacks:Fire("HealComm_Hotupdate", 2,arg1, "Rejuvenation")
+			self.callbacks:Fire("HealComm_Hotupdate", arg1, "Rejuvenation")
 		end
 		if not renew and self.Hots[name]["Renew"] then
 			self.Hots[name]["Renew"] = nil
-			self.callbacks:Fire("HealComm_Hotupdate", 2,arg1, "Renew")
+			self.callbacks:Fire("HealComm_Hotupdate", arg1, "Renew")
 		end			
 	end
 end
@@ -2327,7 +2336,7 @@ HealComm:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_PARTY_BUFFS", "HotTickMessage")
 HealComm:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS", "HotTickMessage")
 HealComm:RegisterEvent("UNIT_HEALTH")
 HealComm:RegisterEvent("PLAYER_LOGIN")
-HealComm.callbacks:Fire("HealComm_Enabled", 0)
+HealComm.callbacks:Fire("HealComm_Enabled")
 
 -- On a mid-session upgrade PLAYER_LOGIN will not fire again, so re-hook now.
 if HealComm.hooked then

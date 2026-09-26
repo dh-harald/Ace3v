@@ -19,8 +19,8 @@
 -- through AceEvent-3.0: AceEvent's registry is shared by every Ace3 addon, so
 -- a synthetic MODIFIER_STATE_CHANGED there would reach other addons' event
 -- handlers, which read arg1/arg2 globals this library cannot set safely.
--- CallbackHandler-1.0 here is the vanilla Ace3 backport (zerosnake0, laytya),
--- whose Fire takes an explicit argument count: Fire(event, argc, a1, ...).
+-- CallbackHandler-1.0 must be MINOR 7 or later, whose Fire takes the payload
+-- as upstream does: Fire(event, a1, ...).
 -- Several addons embedding this library share one poller and one registry
 -- through LibStub.
 --
@@ -38,8 +38,8 @@
 
 local _G = _G or getfenv()
 
-local MAJOR, MINOR = "LibModifierState-1.0", 1
-local lib = LibStub:NewLibrary(MAJOR, MINOR)
+local MAJOR, MINOR = "LibModifierState-1.0", 2
+local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end
 
 local CallbackHandler = LibStub("CallbackHandler-1.0")
@@ -54,6 +54,15 @@ local GETTERS = {
 	ALT = "IsAltKeyDown",
 }
 
+-- Vanilla: MINOR 1 fired with an argument count, Fire(event, argc, ...), and its registry may have been
+-- built by a CallbackHandler with that Fire. Rebuild it, keeping the registrations.
+if oldminor and oldminor < 2 and lib.callbacks then
+	local old = lib.callbacks
+	lib.callbacks = CallbackHandler:New(lib)
+	for event, handlers in pairs(old.events) do
+		for owner, func in pairs(handlers) do lib.callbacks.events[event][owner] = func end
+	end
+end
 lib.callbacks = lib.callbacks or CallbackHandler:New(lib)
 lib.state = lib.state or {}
 lib.frame = lib.frame or CreateFrame("Frame")
@@ -74,9 +83,9 @@ local function Poll()
 		if down ~= lib.state[key] then
 			lib.state[key] = down
 			if down then
-				lib.callbacks:Fire(EVENT, 2, key, 1)
+				lib.callbacks:Fire(EVENT, key, 1)
 			else
-				lib.callbacks:Fire(EVENT, 2, key, 0)
+				lib.callbacks:Fire(EVENT, key, 0)
 			end
 		end
 	end

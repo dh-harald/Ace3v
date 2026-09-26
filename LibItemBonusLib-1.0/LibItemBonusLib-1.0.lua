@@ -10,9 +10,9 @@
 	      AceAddon-2.0 object; this is a plain LibStub library.
 ]]
 
-local MAJOR, MINOR = "LibItemBonusLib-1.0", 1
+local MAJOR, MINOR = "LibItemBonusLib-1.0", 2
 
-local ItemBonusLib = LibStub:NewLibrary(MAJOR, MINOR)
+local ItemBonusLib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 
 if not ItemBonusLib then return end -- No upgrade needed
 
@@ -23,6 +23,15 @@ LibStub("AceEvent-3.0"):Embed(ItemBonusLib)
 LibStub("AceTimer-3.0"):Embed(ItemBonusLib)
 LibStub("AceBucket-3.0"):Embed(ItemBonusLib)
 LibStub("AceConsole-3.0"):Embed(ItemBonusLib)
+-- Vanilla: MINOR 1 fired with an argument count, Fire(event, argc, ...), and its registry may have been
+-- built by a CallbackHandler with that Fire. Rebuild it, keeping the registrations.
+if oldminor and oldminor < 2 and ItemBonusLib.callbacks then
+	local old = ItemBonusLib.callbacks
+	ItemBonusLib.callbacks = LibStub("CallbackHandler-1.0"):New(ItemBonusLib)
+	for event, handlers in pairs(old.events) do
+		for owner, func in pairs(handlers) do ItemBonusLib.callbacks.events[event][owner] = func end
+	end
+end
 ItemBonusLib.callbacks = ItemBonusLib.callbacks or LibStub("CallbackHandler-1.0"):New(ItemBonusLib)
 
 local Gratuity = LibStub("LibGratuity-2.0")
@@ -493,7 +502,7 @@ function ItemBonusLib:ScanEquipment()
 			end
 		end
 	end
-	self.callbacks:Fire("ItemBonusLib_Update", 0)
+	self.callbacks:Fire("ItemBonusLib_Update")
 end
 
 -- DEBUG

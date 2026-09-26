@@ -8,9 +8,9 @@
 	Note: Ace3v port of RosterLib-2.0, API-compatible.
 ]]
 
-local MAJOR, MINOR = "LibRosterLib-2.0", 1
+local MAJOR, MINOR = "LibRosterLib-2.0", 2
 
-local RosterLib = LibStub:NewLibrary(MAJOR, MINOR)
+local RosterLib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 
 if not RosterLib then return end -- No upgrade needed
 
@@ -19,6 +19,15 @@ local new, del = AceCore.new, AceCore.del
 
 LibStub("AceEvent-3.0"):Embed(RosterLib)
 LibStub("AceTimer-3.0"):Embed(RosterLib)
+-- Vanilla: MINOR 1 fired with an argument count, Fire(event, argc, ...), and its registry may have been
+-- built by a CallbackHandler with that Fire. Rebuild it, keeping the registrations.
+if oldminor and oldminor < 2 and RosterLib.callbacks then
+	local old = RosterLib.callbacks
+	RosterLib.callbacks = LibStub("CallbackHandler-1.0"):New(RosterLib)
+	for event, handlers in pairs(old.events) do
+		for owner, func in pairs(handlers) do RosterLib.callbacks.events[event][owner] = func end
+	end
+end
 RosterLib.callbacks = RosterLib.callbacks or LibStub("CallbackHandler-1.0"):New(RosterLib)
 
 -- Lua APIs
@@ -72,7 +81,7 @@ function Initialize()
 	-- "invalid key for `next'". The `initialized` guard above makes the extra
 	-- callbacks a no-op instead.
 
-	RosterLib.callbacks:Fire("RosterLib_Enabled", 0)
+	RosterLib.callbacks:Fire("RosterLib_Enabled")
 	RosterLib:RegisterEvent("RAID_ROSTER_UPDATE", "ScanFullRoster")
 	RosterLib:RegisterEvent("PARTY_MEMBERS_CHANGED", "ScanFullRoster")
 	RosterLib:RegisterEvent("UNIT_PET", "UNIT_PET")
@@ -240,14 +249,10 @@ end
 
 function RosterLib:ProcessRoster()
 	if next(updatedUnits, nil) then
-		self.callbacks:Fire("RosterLib_RosterChanged", 1, updatedUnits)
+		self.callbacks:Fire("RosterLib_RosterChanged", updatedUnits)
 		for name in pairs(updatedUnits) do
 			local u = updatedUnits[name]
-			-- Ace3v: CallbackHandler can carry 9 payload arguments, not 10 -- the
-			-- event name takes one of the dispatcher's ten slots. RosterLib-2.0's
-			-- 10th argument (oldrank) is therefore not passed here; it is still
-			-- available from the updatedUnits table fired above.
-			self.callbacks:Fire("RosterLib_UnitChanged", 9, u.unitid, u.name, u.class, u.subgroup, u.rank, u.oldname, u.oldunitid, u.oldclass, u.oldsubgroup)
+			self.callbacks:Fire("RosterLib_UnitChanged", u.unitid, u.name, u.class, u.subgroup, u.rank, u.oldname, u.oldunitid, u.oldclass, u.oldsubgroup, u.oldrank)
 			del(updatedUnits[name])
 			updatedUnits[name] = nil
 		end

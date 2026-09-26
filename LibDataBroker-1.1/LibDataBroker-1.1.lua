@@ -2,11 +2,20 @@
 assert(LibStub, "LibDataBroker-1.1 requires LibStub")
 assert(LibStub:GetLibrary("CallbackHandler-1.0", true), "LibDataBroker-1.1 requires CallbackHandler-1.0")
 
-local lib, oldminor = LibStub:NewLibrary("LibDataBroker-1.1", 4)
+local lib, oldminor = LibStub:NewLibrary("LibDataBroker-1.1", 5)
 if not lib then return end
 oldminor = oldminor or 0
 
 
+-- Vanilla: MINOR 4 fired with an argument count, Fire(event, argc, ...), and its registry may have been
+-- built by a CallbackHandler with that Fire. Rebuild it, keeping the registrations.
+if oldminor > 0 and oldminor < 5 and lib.callbacks then
+	local old = lib.callbacks
+	lib.callbacks = LibStub:GetLibrary("CallbackHandler-1.0"):New(lib)
+	for event, handlers in pairs(old.events) do
+		for owner, func in pairs(handlers) do lib.callbacks.events[event][owner] = func end
+	end
+end
 lib.callbacks = lib.callbacks or LibStub:GetLibrary("CallbackHandler-1.0"):New(lib)
 lib.attributestorage, lib.namestorage, lib.proxystorage = lib.attributestorage or {}, lib.namestorage or {}, lib.proxystorage or {}
 local attributestorage, namestorage, callbacks = lib.attributestorage, lib.namestorage, lib.callbacks
@@ -18,21 +27,21 @@ if oldminor < 2 then
 	}
 end
 
-if oldminor < 3 then
+if oldminor < 5 then
 	lib.domt.__newindex = function(self, key, value)
 		if not attributestorage[self] then attributestorage[self] = {} end
 		if attributestorage[self][key] == value then return end
 		attributestorage[self][key] = value
 		local name = namestorage[self]
 		if not name then return end
-		callbacks:Fire("LibDataBroker_AttributeChanged", 4, name, key, value, self)
-		callbacks:Fire("LibDataBroker_AttributeChanged_"..name, 4, name, key, value, self)
-		callbacks:Fire("LibDataBroker_AttributeChanged_"..name.."_"..key, 4, name, key, value, self)
-		callbacks:Fire("LibDataBroker_AttributeChanged__"..key, 4, name, key, value, self)
+		callbacks:Fire("LibDataBroker_AttributeChanged", name, key, value, self)
+		callbacks:Fire("LibDataBroker_AttributeChanged_"..name, name, key, value, self)
+		callbacks:Fire("LibDataBroker_AttributeChanged_"..name.."_"..key, name, key, value, self)
+		callbacks:Fire("LibDataBroker_AttributeChanged__"..key, name, key, value, self)
 	end
 end
 
-if oldminor < 2 then
+if oldminor < 5 then
 	function lib:NewDataObject(name, dataobj)
 		if self.proxystorage[name] then return end
 
@@ -46,7 +55,7 @@ if oldminor < 2 then
 		end
 		dataobj = setmetatable(dataobj or {}, self.domt)
 		self.proxystorage[name], self.namestorage[dataobj] = dataobj, name
-		self.callbacks:Fire("LibDataBroker_DataObjectCreated", 2, name, dataobj)
+		self.callbacks:Fire("LibDataBroker_DataObjectCreated", name, dataobj)
 		return dataobj
 	end
 end

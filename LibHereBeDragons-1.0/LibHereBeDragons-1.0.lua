@@ -8,10 +8,10 @@
 --
 -- Dependencies: LibStub, CallbackHandler-1.0.
 
-local MAJOR, MINOR = "LibHereBeDragons-1.0", 1
+local MAJOR, MINOR = "LibHereBeDragons-1.0", 2
 assert(LibStub, MAJOR .. " requires LibStub")
 
-local HBD = LibStub:NewLibrary(MAJOR, MINOR)
+local HBD, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not HBD then return end
 
 local CBH = LibStub("CallbackHandler-1.0")
@@ -40,6 +40,15 @@ HBD.cosmicData       = HBD.cosmicData or {}
 HBD.mapToID          = HBD.mapToID or {}
 HBD.nameToID         = HBD.nameToID or {}
 HBD.continentZoneMap = HBD.continentZoneMap or {}
+-- Vanilla: MINOR 1 fired with an argument count, Fire(event, argc, ...), and its registry may have been
+-- built by a CallbackHandler with that Fire. Rebuild it, keeping the registrations.
+if oldminor and oldminor < 2 and HBD.callbacks then
+	local old = HBD.callbacks
+	HBD.callbacks = CBH:New(HBD, nil, nil, false)
+	for event, handlers in pairs(old.events) do
+		for owner, func in pairs(handlers) do HBD.callbacks.events[event][owner] = func end
+	end
+end
 HBD.callbacks        = HBD.callbacks or CBH:New(HBD, nil, nil, false)
 -- Unnamed: on Unreal Azeroth CreateFrame() rewrites every "-" in a frame name.
 HBD.eventFrame       = HBD.eventFrame or CreateFrame("Frame")
@@ -480,7 +489,7 @@ local function updateCurrentPosition(force)
 			currentX, currentY = x, y
 			if id ~= currentMapID or force then
 				currentMapID, currentMapFile = id, mapData[id].mapFile
-				HBD.callbacks:Fire("PlayerZoneChanged", 3, currentMapID, nil, currentMapFile)
+				HBD.callbacks:Fire("PlayerZoneChanged", currentMapID, nil, currentMapFile)
 			end
 		else
 			-- An instance, or a map with no data: keep the zone, drop the position.
