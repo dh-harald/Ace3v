@@ -4,7 +4,8 @@
 -- AceConfig-format options table (the same shape AceConfigDialog-3.0 consumes)
 -- and renders it into its own window: a list of registered addons/categories on
 -- the left, the selected category's options on the right (nested groups shown
--- as inline section headers).
+-- as inline section headers). lib:Embed renders the same pages into a frame of
+-- the host addon instead, without the window around them.
 --
 -- This replaces `InterfaceOptionsFrame_OpenToCategory`, whose Blizzard
 -- Interface Options frame is broken on the Unreal Azeroth 1.12.1 server (and
@@ -13,11 +14,12 @@
 -- The look borrows ElvUI's *colour palette only*; the widget/frame mechanics
 -- follow UnrealUI's proven-on-this-client patterns (flat fill backdrops,
 -- explicit 1px borders drawn as textures, a drag-thumb Button for `range`
--- instead of the broken native Slider, no EditBox).
+-- instead of the broken native Slider, an own colour dialog instead of the
+-- broken native ColorPickerFrame).
 --
 -- Distributed as a LibStub embedded minor, like Ace3.
 
-local MAJOR, MINOR = "LibConfig-1.0", 3
+local MAJOR, MINOR = "LibConfig-1.0", 4
 local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return -- already loaded (older/newer minor)
@@ -76,21 +78,18 @@ local ROW_GAP = 8
 local HEADER_H = 30
 local SLIDER_H = 56
 local DESC_H = 20
+-- `multiselect`: the narrowest column an entry gets (as many columns as
+-- fit the content width), and the gap between an entry's box and its text.
+local MULTISELECT_COLUMN_WIDTH = 140
+local MULTISELECT_LABEL_GAP = 6
 local BUTTON_LABEL_OFFSET_Y = -2
 
--- Forward-declared here (before the widget constructors) so CreateDropdown can
--- parent its popup menu to the panel. Assigned later in Build().
+-- The options window. Forward-declared here, before the widget constructors,
+-- so MeasureTextWidth can host its measuring FontString on it. Assigned in
+-- Build().
 local panel
 
--- Forward-declared for the same reason (MINOR 11): CreateDropdown has to
--- know how far the options page is currently scrolled to place its popup
--- menu correctly -- see AnchorMenuToButton there for the full why. The
--- real `contentOffset` upvalue is declared much further down, next to the
--- rest of the content-scroll state, so a getter is forward-declared here
--- and assigned alongside it rather than hoisting that whole block up.
-local GetContentScrollOffset
-
--- Forward-declared for the same reason: CreateDropdown's AnchorMenuToButton
+-- Forward-declared because CreateDropdown's AnchorMenuToButton
 -- branches on the client, and DetectUA is defined next to the drag-capture
 -- code it was written for, much further down.
 local DetectUA
@@ -1062,8 +1061,11 @@ local function CreateDropdown(parent, options)
     -- Azeroth (a plain Frame/Button's OnMouseWheel never fires there). The rows
     -- are NOT its scroll child (a tall scroll child does not render on Unreal
     -- Azeroth); they are children of the menu and positioned by hand. The menu
-    -- is a child of the panel so it renders above the other widgets.
-    local menu = CreateFrame("ScrollFrame", options.name and (options.name .. "Menu") or nil, panel)
+    -- is a child of the frame around the page (`options.menuParent`: the
+    -- options window, or the host frame of an embedded view) so it renders
+    -- above the other widgets.
+    local menu = CreateFrame("ScrollFrame", options.name and (options.name .. "Menu") or nil,
+        options.menuParent or panel or UIParent)
     menu:SetWidth(width)
     menu:SetHeight(menuViewHeight)
     CreateBackdrop(menu, { background = THEME.backdrop })
@@ -1213,7 +1215,7 @@ local function CreateDropdown(parent, options)
     end
 
     -- Re-anchored at OPEN time. The BUTTON lives in `content`, the scroll
-    -- child of `contentScroll`, while the MENU is parented to `panel`: a
+    -- child of `contentScroll`, while the MENU is parented outside it: a
     -- ScrollFrame clips its scroll child, so a menu parented into the content
     -- would be cut off for the dropdowns at the bottom of a page. (Parenting
     -- the menu into `content` makes it not render at all on Unreal Azeroth,
@@ -1229,15 +1231,17 @@ local function CreateDropdown(parent, options)
     --    (measured: the button's GetBottom and the content's GetTop stayed
     --    the same at scroll offsets 48 and 192), so the scroll amount is added
     --    back. This relies on the content being DRAWN scrolled by exactly
-    --    `contentOffset`, which on that client only holds because
+    --    page's scroll offset, which on that client only holds because
     --    SetContentScroll translates the value first (see ScrollFrameValue).
+    --    `options.getScrollOffset` reports the offset of the page this
+    --    dropdown is on.
     --
     -- Positive Y moves a frame up. At scroll offset 0 both branches are the
     -- plain anchor.
     local function AnchorMenuToButton()
         local scrolled = 0
-        if DetectUA and DetectUA() and GetContentScrollOffset then
-            scrolled = GetContentScrollOffset() or 0
+        if DetectUA and DetectUA() and options.getScrollOffset then
+            scrolled = options.getScrollOffset() or 0
         end
         pcall(menu.ClearAllPoints, menu)
         pcall(menu.SetPoint, menu, "TOPLEFT", button, "BOTTOMLEFT", 0, -1 + scrolled)
@@ -1584,15 +1588,54 @@ local function AttachThumbDrag(thumb, ticker, handlers)
     return Stop
 end
 
+-- AceConfig's soft range, as AceConfigDialog applies it: the track runs from
+-- `softMin` to `softMax` (each defaulting to `min` / `max`) and a drag moves
+-- in `bigStep` steps (defaulting to `step`), while a typed value may go
+-- anywhere within `min`..`max`, rounded to `step`. A missing `min` / `max` is
+-- unbounded when its soft counterpart is given, and 0 / 100 otherwise. The
+-- thumb rests at the track's end for a value outside the soft range.
+-- `isPercent`, as AceGUI's Slider shows it: the stored value stays as it is
+-- (0..1 for 0..100%), the readout and the track's end labels show it times
+-- 100 with a "%" (the readout to one decimal), and a typed value is read as
+-- percent, with or without the "%".
 local function CreateSlider(parent, options)
     options = options or {}
     local width = options.width or 200
-    local min = tonumber(options.min) or 0
-    local max = tonumber(options.max) or 100
+    local min = tonumber(options.min)
+    local max = tonumber(options.max)
+    local softMin = tonumber(options.softMin)
+    local softMax = tonumber(options.softMax)
+    if not min and not softMin then min = 0 end
+    if not max and not softMax then max = 100 end
+    local trackMin = softMin or min
+    local trackMax = softMax or max
     local step = tonumber(options.step) or 1
     if step <= 0 then step = 1 end
-    local control = { min = min, max = max, step = step, uuiParts = {} }
+    local bigStep = tonumber(options.bigStep) or step
+    if bigStep <= 0 then bigStep = step end
+    local control = { min = trackMin, max = trackMax, step = step, uuiParts = {} }
     local parts = control.uuiParts
+    local isPercent = options.isPercent and true or false
+
+    -- The text a value is shown as, and the value a typed text stands for
+    -- (nil when it is not a number).
+    local function FormatValue(value)
+        if isPercent then
+            return tostring(math.floor(value * 1000 + 0.5) / 10) .. "%"
+        end
+        return tostring(value)
+    end
+    local function ParseValue(text)
+        if isPercent then
+            local number = tonumber((string.gsub(text or "", "[%%%s]", "")))
+            return number and number / 100
+        end
+        return tonumber(text)
+    end
+    local function FormatBound(value)
+        if isPercent then return tostring(value * 100) .. "%" end
+        return tostring(value)
+    end
 
     local track = CreateFrame("Frame", options.name and (options.name .. "Track") or nil, parent)
     track:SetWidth(width)
@@ -1601,13 +1644,25 @@ local function CreateSlider(parent, options)
     control.track = track
     table.insert(parts, track)
 
+    -- A value the option accepts: rounded to `step` from `min` (from the
+    -- track's start when `min` is unbounded), within `min`..`max`.
     local function Clamp(raw)
         raw = tonumber(raw)
-        if not raw then return min end
-        raw = math.floor((raw - min) / step + 0.5) * step + min
-        if raw < min then raw = min end
-        if raw > max then raw = max end
+        if not raw then return min or trackMin end
+        local base = min or trackMin
+        raw = math.floor((raw - base) / step + 0.5) * step + base
+        if min and raw < min then raw = min end
+        if max and raw > max then raw = max end
         return raw
+    end
+
+    -- The value at a point of the track: rounded to `bigStep` from the
+    -- track's start, within the soft range, then made acceptable.
+    local function DragValue(raw)
+        raw = math.floor((raw - trackMin) / bigStep + 0.5) * bigStep + trackMin
+        if raw < trackMin then raw = trackMin end
+        if raw > trackMax then raw = trackMax end
+        return Clamp(raw)
     end
 
     local THUMB_WIDTH, THUMB_HEIGHT = 12, 14
@@ -1630,8 +1685,11 @@ local function CreateSlider(parent, options)
     local function PlaceThumb(value)
         local usable = width - THUMB_WIDTH
         local offset = 0
-        if max > min and usable > 0 then
-            offset = (Clamp(value) - min) / (max - min) * usable
+        if trackMax > trackMin and usable > 0 then
+            local onTrack = Clamp(value)
+            if onTrack < trackMin then onTrack = trackMin end
+            if onTrack > trackMax then onTrack = trackMax end
+            offset = (onTrack - trackMin) / (trackMax - trackMin) * usable
         end
         thumb:ClearAllPoints()
         thumb:SetPoint("LEFT", track, "LEFT", offset, 0)
@@ -1645,7 +1703,7 @@ local function CreateSlider(parent, options)
     })
     if minLabel then
         minLabel:SetPoint("TOPLEFT", track, "BOTTOMLEFT", 0, -3)
-        minLabel:SetText(tostring(min))
+        minLabel:SetText(FormatBound(trackMin))
     end
     table.insert(parts, minLabel)
 
@@ -1658,7 +1716,7 @@ local function CreateSlider(parent, options)
     })
     if maxLabel then
         maxLabel:SetPoint("TOPRIGHT", track, "BOTTOMRIGHT", 0, -3)
-        maxLabel:SetText(tostring(max))
+        maxLabel:SetText(FormatBound(trackMax))
     end
     table.insert(parts, maxLabel)
 
@@ -1697,7 +1755,7 @@ local function CreateSlider(parent, options)
     local function UpdateReadout(raw)
         local clamped = Clamp(raw)
         control.current = clamped
-        if readout then readout:SetText(tostring(clamped)) end
+        if readout then readout:SetText(FormatValue(clamped)) end
         return clamped
     end
 
@@ -1728,9 +1786,9 @@ local function CreateSlider(parent, options)
     -- box already shows the clamped value, so it's a no-op resync, not a
     -- second Publish.
     local function CommitTypedValue()
-        local raw = tonumber(readout:GetText())
+        local raw = ParseValue(readout:GetText())
         if not raw then
-            UpdateReadout(control.current or min)
+            UpdateReadout(control.current or trackMin)
             return
         end
         local clamped = Clamp(raw)
@@ -1752,7 +1810,7 @@ local function CreateSlider(parent, options)
         CommitTypedValue()
     end)
     readout:SetScript("OnEscapePressed", function()
-        UpdateReadout(control.current or min)
+        UpdateReadout(control.current or trackMin)
         pcall(readout.ClearFocus, readout)
     end)
 
@@ -1774,6 +1832,11 @@ local function CreateSlider(parent, options)
     end
 
     local liveTicker = CreateFrame("Frame", nil, parent)
+    -- One of the slider's parts, so it is hidden with the rest of it when the
+    -- page is cleared: it is a child of the page's content frame, which
+    -- stays shown, and a frame left shown keeps its OnUpdate running long
+    -- after its slider is gone.
+    table.insert(parts, liveTicker)
 
     AttachThumbDrag(thumb, liveTicker, {
         onStart = function()
@@ -1805,8 +1868,8 @@ local function CreateSlider(parent, options)
             thumb:ClearAllPoints()
             thumb:SetPoint("LEFT", track, "LEFT", offset, 0)
 
-            if max > min then
-                local clamped = Clamp(min + offset / usable * (max - min))
+            if trackMax > trackMin then
+                local clamped = DragValue(trackMin + offset / usable * (trackMax - trackMin))
                 if clamped ~= lastLiveValue then
                     lastLiveValue = clamped
                     UpdateReadout(clamped)
@@ -1820,7 +1883,7 @@ local function CreateSlider(parent, options)
         onStop = function()
             -- The thumb tracked the cursor smoothly; put it back on the
             -- exact stepped position of whatever value was committed.
-            PlaceThumb(control.current or min)
+            PlaceThumb(control.current or trackMin)
             Commit()
         end,
     })
@@ -1834,7 +1897,7 @@ local function CreateSlider(parent, options)
         track:SetPoint(point, relative, relativePoint, x, y)
     end
 
-    control.SetValue(options.value or min)
+    control.SetValue(options.value or trackMin)
     return control
 end
 
@@ -3000,76 +3063,110 @@ local function BuildPageId(appName, catName, path)
 end
 
 -- ===========================================================================
--- Window
+-- Render targets ("views")
+--
+-- Everything the page renderer draws into belongs to a view: the ScrollFrame
+-- and its content frame, the scrollbar in the gutter next to it, the widgets
+-- on the page, the layout cursor, the scroll offset and the widths the rows
+-- are laid out to. The options window's content area is one view
+-- (panelView); lib:Embed creates more, inside frames of the host addon.
+--
+-- `V` is the view being rendered or scrolled right now. Every entry point --
+-- a page selection, a widget's commit, a tab click, the scrollbar, the mouse
+-- wheel, NotifyChange -- makes its own view current first, and every closure
+-- created while rendering captures the view it belongs to rather than
+-- trusting `V` to still be that view when it runs.
 -- ===========================================================================
-local sidebar, content, contentScroll
--- The right-gutter scrollbar (MINOR 11). Replaced the old
--- `contentUpBtn`/`contentDownBtn` footer pair -- the bar carries its own
--- arrow buttons at either end now.
-local contentScrollBar
--- The sidebar gets its own, since its rows are hand-placed in a plain
--- Frame that nothing scrolls or clips on its own.
+local function NewView()
+    return {
+        content = nil,        -- the scroll child the widgets are placed in
+        contentScroll = nil,  -- the ScrollFrame around it
+        -- The right-gutter scrollbar (MINOR 11). Replaced the old
+        -- `contentUpBtn`/`contentDownBtn` footer pair -- the bar carries its
+        -- own arrow buttons at either end.
+        scrollBar = nil,
+        menuParent = nil,     -- parent of the dropdown menus on this page
+        widgets = {},
+        yCursor = 0,
+        offset = 0,           -- scroll offset as drawn on screen
+        maxOffset = 0,
+        -- The exact page table last passed to RenderContent -- kept so a tab
+        -- button's OnClick can re-render the SAME page in place (new tab
+        -- selection, same sidebar navigation) without needing to rebuild or
+        -- re-look-up a page from BuildVisibleRows() (whose page tables are
+        -- fresh every call, see the activePageId note below -- same reason
+        -- this can't just be "the page with id == activePageId").
+        currentPage = nil,
+        refreshing = false,
+        showTitle = true,     -- page title and accent rule above the options
+        width = CONTENT_WIDTH,
+        labelWidth = LABEL_WIDTH,
+        controlWidth = CONTROL_WIDTH,
+    }
+end
+
+local panelView = NewView()
+local V = panelView
+
+-- Views created by lib:Embed, so NotifyChange can reach them.
+local embeddedViews = {}
+
+local sidebar
+-- The sidebar gets its own scrollbar, since its rows are hand-placed in a
+-- plain Frame that nothing scrolls or clips on its own.
 local sidebarScrollBar
 local sidebarOffset = 0
 -- Forward-declared: ScrollContentBy (defined before it) routes through it,
--- and the scrollbar's own onScroll callback -- created inside Build -- calls
--- it too.
+-- and each view's scrollbar onScroll callback calls it too.
 local SetContentScroll
-local contentOffset = 0
-local contentMaxOffset = 0
 
--- Assignment of the getter forward-declared at the top of the file, so
--- CreateDropdown (defined long before this point) can read the live
--- scroll amount without this whole block having to move up.
-GetContentScrollOffset = function()
-    return contentOffset or 0
-end
 local panelChrome = {}
 local sidebarRows = {}
-local contentWidgets = {}
 -- A string id, NOT a page table reference: BuildVisibleRows() rebuilds fresh
 -- page tables on every call (tree structure is recomputed from the live
 -- options tables each render), so comparing "is this the active page" by `==`
 -- on a table would almost never match past the first render -- the same bug
 -- shape as the GameMenu anchor-drift fix, avoided here by never doing it.
+-- Options window only: an embedded view has no sidebar to highlight.
 local activePageId
-local yCursor
--- The exact page table last passed to RenderContent -- kept so a tab
--- button's OnClick can re-render the SAME page in place (new tab
--- selection, same sidebar navigation) without needing to rebuild or
--- re-look-up a page from BuildVisibleRows() (whose page tables are fresh
--- every call, see the activePageId note above -- same reason this can't
--- just be "the page with id == activePageId").
-local currentPage
 
 local SelectPage -- forward declaration; assigned after RenderSidebar
 
--- Re-renders the page currently on screen so every widget re-reads its own
--- `get`. Assigned next to SelectPage, far below.
+-- Re-renders the page a view currently shows, so every widget re-reads its
+-- own `get`. Assigned next to SelectPage, far below.
 --
 -- THE DECLARATION HAS TO STAY HERE, ABOVE RenderLeaf. An `execute`
 -- button's onClick closure is compiled inside RenderLeaf, so it can only
 -- capture locals that already exist at that point -- declared any later,
 -- the closure silently resolves the name as a GLOBAL instead, which is nil
--- at runtime. With a `if RefreshOpenPage then` guard around the call that
+-- at runtime. With a `if RefreshView then` guard around the call that
 -- fails as a no-op with no error at all: the button appears dead. (Same
 -- trap the RenderContent forward declaration further down warns about,
 -- which is placed for RenderTabStrip -- a function defined AFTER it.)
-local RefreshOpenPage
+local RefreshView
 
 local function AddWidget(w)
-    table.insert(contentWidgets, w)
+    table.insert(V.widgets, w)
 end
 
 local function ClearContent()
-    SetListShown(contentWidgets, false)
-    contentWidgets = {}
+    SetListShown(V.widgets, false)
+    V.widgets = {}
 end
 
--- Renders one leaf option; advances yCursor and registers its regions.
+-- Renders one leaf option into the current view; advances its yCursor and
+-- registers its regions.
 local function RenderLeaf(opt, arg, path, handler, root, appName)
     local hidden = ResolveMember("hidden", root, appName, path, handler, arg, opt)
     if hidden then return end
+
+    -- The view's layout, under the names the rows below are written with.
+    -- Nothing in this function renders into another view, so the copies
+    -- stay valid; yCursor is written back at the end.
+    local view = V
+    local content = view.content
+    local CONTENT_WIDTH, CONTROL_WIDTH, LABEL_WIDTH = view.width, view.controlWidth, view.labelWidth
+    local yCursor = view.yCursor
 
     local name = ResolveMember("name", root, appName, path, handler, arg, opt)
     if name == nil then name = arg end
@@ -3093,7 +3190,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
     -- The cost is a full page rebuild per interaction, and this library
     -- builds fresh widgets on every render rather than pooling them.
     local function AfterCommit()
-        RefreshOpenPage()
+        RefreshView(view)
     end
 
     -- Dimming the NAME is the fallback disabled cue, for the control types
@@ -3277,6 +3374,8 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 value = current,
                 width = CONTENT_WIDTH,
                 previewType = previewType,
+                menuParent = view.menuParent,
+                getScrollOffset = function() return view.offset end,
                 onChange = function(v)
                     ResolveMember("set", root, appName, path, handler, arg, opt, v)
                     AfterCommit()
@@ -3293,6 +3392,8 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 value = current,
                 width = CONTROL_WIDTH,
                 previewType = previewType,
+                menuParent = view.menuParent,
+                getScrollOffset = function() return view.offset end,
                 onChange = function(v)
                     ResolveMember("set", root, appName, path, handler, arg, opt, v)
                     AfterCommit()
@@ -3304,13 +3405,92 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             yCursor = yCursor + ROW_HEIGHT + ROW_GAP
         end
 
+    elseif t == "multiselect" then
+        -- One checkbox per `values` entry, under the option's name, packed
+        -- into columns -- AceConfigDialog draws the same thing as an inline
+        -- group of CheckBoxes. AceConfig's calling convention: get(info, key)
+        -- reads one entry, set(info, key, checked) writes it. Entries are
+        -- sorted by their text, as `select` sorts its menu. The multiselect
+        -- form of `tristate` is not supported.
+        local values = ResolveMember("values", root, appName, path, handler, arg, opt)
+        local items = {}
+        if type(values) == "table" then
+            local k, v
+            for k, v in pairs(values) do
+                table.insert(items, { value = k, text = tostring(v) })
+            end
+            table.sort(items, function(a, b) return a.text < b.text end)
+        end
+
+        local label = CreateLabel(content, {
+            color = disabled and THEME.textDim or THEME.text,
+            inherits = "GameFontNormalSmall",
+            justify = "LEFT",
+            width = CONTENT_WIDTH,
+            height = 16,
+        })
+        if label then
+            label:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
+            label:SetText(name)
+        end
+        AddWidget(label)
+        yCursor = yCursor + 16
+
+        local columns = math.max(1, math.floor(CONTENT_WIDTH / MULTISELECT_COLUMN_WIDTH))
+        local columnWidth = math.floor(CONTENT_WIDTH / columns)
+        local column, row = 0, 1
+        local j
+        for j = 1, table.getn(items) do
+            local item = items[j]
+            column = column + 1
+            if column > columns then
+                column = 1
+                row = row + 1
+            end
+            local x = (column - 1) * columnWidth
+            local y = yCursor + (row - 1) * ROW_HEIGHT
+
+            local cb = CreateCheckbox(content, {
+                value = ResolveMember("get", root, appName, path, handler, arg, opt, item.value),
+                disabled = disabled,
+                onChange = function(v)
+                    ResolveMember("set", root, appName, path, handler, arg, opt, item.value, v)
+                    AfterCommit()
+                end,
+            })
+            cb:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y + (ROW_HEIGHT - 16) / 2)
+            if desc then AttachTooltip(cb.box, desc) end
+            AddWidget(cb)
+
+            local itemLabel = CreateLabel(content, {
+                color = THEME.text,
+                inherits = "GameFontNormalSmall",
+                justify = "LEFT",
+                width = math.max(1, columnWidth - 16 - MULTISELECT_LABEL_GAP * 2),
+                height = ROW_HEIGHT,
+            })
+            if itemLabel then
+                itemLabel:SetPoint("TOPLEFT", content, "TOPLEFT", x + 16 + MULTISELECT_LABEL_GAP, -y)
+                itemLabel:SetText(item.text)
+            end
+            AddWidget(itemLabel)
+        end
+        if table.getn(items) > 0 then
+            yCursor = yCursor + row * ROW_HEIGHT
+        end
+        yCursor = yCursor + ROW_GAP
+
     elseif t == "range" then
         local current = ResolveMember("get", root, appName, path, handler, arg, opt)
         AddNameLabel()
         local sl = CreateSlider(content, {
             min = opt.min,
             max = opt.max,
+            softMin = opt.softMin,
+            softMax = opt.softMax,
             step = opt.step,
+            bigStep = opt.bigStep,
+            isPercent = opt.isPercent,
             value = current,
             width = CONTROL_WIDTH,
             onChange = function(v)
@@ -3408,11 +3588,11 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 -- mutated, so the button running this line is gone by
                 -- the time the handler returns, which is safe as long as
                 -- nothing touches it afterwards.
-                -- Called WITHOUT a `if RefreshOpenPage then` guard on
+                -- Called WITHOUT a `if RefreshView then` guard on
                 -- purpose: such a guard turns a wrongly-ordered forward
                 -- declaration into a dead button with no error at all,
                 -- which is exactly how this line failed once already.
-                RefreshOpenPage()
+                RefreshView(view)
             end,
         })
         btn:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
@@ -3420,6 +3600,8 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         AddWidget(btn)
         yCursor = yCursor + 24 + ROW_GAP
     end
+
+    view.yCursor = yCursor
 end
 
 local TAB_HEIGHT = ROW_HEIGHT
@@ -3534,23 +3716,23 @@ RenderGroup = function(group, path, handler, root, appName, inInlineContext, cat
                 if inInlineContext or EffectiveInline(opt) then
                     -- Rendered as a section header on THIS page, then its
                     -- children (unchanged from before).
-                    local title = CreateLabel(content, {
+                    local title = CreateLabel(V.content, {
                         color = THEME.accent,
                         inherits = "GameFontNormal",
                         justify = "LEFT",
-                        width = CONTENT_WIDTH,
+                        width = V.width,
                         height = 18,
                     })
                     if title then
-                        title:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
+                        title:SetPoint("TOPLEFT", V.content, "TOPLEFT", 0, -V.yCursor)
                         title:SetText(ResolveMember("name", root, appName, newPath, newHandler, key, opt) or key)
                     end
                     AddWidget(title)
-                    local rule = CreateRule(content, { color = THEME.hover })
-                    rule:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(yCursor + 20))
-                    rule:SetWidth(CONTENT_WIDTH)
+                    local rule = CreateRule(V.content, { color = THEME.hover })
+                    rule:SetPoint("TOPLEFT", V.content, "TOPLEFT", 0, -(V.yCursor + 20))
+                    rule:SetWidth(V.width)
                     AddWidget(rule)
-                    yCursor = yCursor + HEADER_H
+                    V.yCursor = V.yCursor + HEADER_H
 
                     RenderGroup(opt, newPath, newHandler, root, appName, true, catName)
                 elseif isTabGroup and IsVisibleGroup(opt, root, appName, newPath, newHandler, key) then
@@ -3581,6 +3763,9 @@ end
 -- Selection persists in lib.tabState, keyed by this GROUP's own path (not
 -- the child's) so it round-trips correctly across re-renders/navigation.
 RenderTabStrip = function(group, tabChildren, path, root, appName, catName)
+    local view = V
+    local content = view.content
+    local CONTENT_WIDTH = view.width
     local numTabs = table.getn(tabChildren)
     local groupId = BuildPageId(appName, catName, path)
 
@@ -3687,7 +3872,7 @@ RenderTabStrip = function(group, tabChildren, path, root, appName, catName)
             tabX = 0
         end
         local tabWidth = widths[i]
-        local tabY = yCursor + (currentRow - 1) * (TAB_HEIGHT + TAB_GAP)
+        local tabY = view.yCursor + (currentRow - 1) * (TAB_HEIGHT + TAB_GAP)
         local t = tabChildren[i]
         local isSelected = (t.key == selectedTab.key)
         -- background/border/textColor passed straight into CreateButton
@@ -3707,8 +3892,9 @@ RenderTabStrip = function(group, tabChildren, path, root, appName, catName)
             textColor = isSelected and THEME.accent or THEME.text,
             onClick = function()
                 lib.tabState[groupId] = t.key
-                if currentPage then
-                    RenderContent(currentPage)
+                V = view
+                if view.currentPage then
+                    RenderContent(view.currentPage)
                     -- BUG FIXED (MINOR 11): a tab click re-rendered the
                     -- content but never recomputed the SCROLL EXTENT --
                     -- only SelectPage (sidebar navigation) called
@@ -3734,43 +3920,64 @@ RenderTabStrip = function(group, tabChildren, path, root, appName, catName)
         AddWidget(btn)
         tabX = tabX + tabWidth + TAB_GAP
     end
-    yCursor = yCursor + numRows * TAB_HEIGHT + (numRows - 1) * TAB_GAP + ROW_GAP
+    view.yCursor = view.yCursor + numRows * TAB_HEIGHT + (numRows - 1) * TAB_GAP + ROW_GAP
 
     local rule = CreateRule(content, { color = THEME.hover })
-    rule:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
+    rule:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -view.yCursor)
     rule:SetWidth(CONTENT_WIDTH)
     AddWidget(rule)
-    yCursor = yCursor + ROW_GAP
+    view.yCursor = view.yCursor + ROW_GAP
 
     RenderGroup(selectedTab.opt, selectedTab.path, selectedTab.handler, root, appName, false, catName)
 end
 
 -- page: { group, path, handler, root, appName, displayName, id, depth,
 -- children, catName } -- see BuildRootPage/CollectChildPages below.
+-- Renders into the current view.
 RenderContent = function(page)
-    currentPage = page
-    ClearContent()
-    yCursor = 0
+    local view = V
 
-    local title = CreateLabel(content, {
-        color = THEME.text,
-        inherits = "GameFontNormal",
-        justify = "LEFT",
-        width = CONTENT_WIDTH,
-        height = 22,
-    })
-    if title then
-        title:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
-        title:SetText(page.displayName)
+    -- An edit box that still has the focus commits before the page it is
+    -- on is torn down: on Unreal Azeroth hiding a focused EditBox does not
+    -- take the focus away, so its OnEditFocusLost -- which is what commits
+    -- -- would never run, and whatever was typed would be lost when the page
+    -- is replaced (a tab or page switch without Enter first). The commit may
+    -- redraw a view of its own, so `V` is put back afterwards.
+    if focusedEditBox then
+        local box = focusedEditBox
+        focusedEditBox = nil
+        pcall(box.ClearFocus, box)
+        V = view
     end
-    AddWidget(title)
 
-    local rule = CreateRule(content, { color = THEME.accent })
-    rule:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -24)
-    rule:SetWidth(CONTENT_WIDTH)
-    AddWidget(rule)
+    local content = view.content
+    view.currentPage = page
+    ClearContent()
+    view.yCursor = 0
 
-    yCursor = 34
+    -- An embedded view leaves the title to its host, which has its own
+    -- header around the frame it gave this library.
+    if view.showTitle then
+        local title = CreateLabel(content, {
+            color = THEME.text,
+            inherits = "GameFontNormal",
+            justify = "LEFT",
+            width = view.width,
+            height = 22,
+        })
+        if title then
+            title:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+            title:SetText(page.displayName)
+        end
+        AddWidget(title)
+
+        local rule = CreateRule(content, { color = THEME.accent })
+        rule:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -24)
+        rule:SetWidth(view.width)
+        AddWidget(rule)
+
+        view.yCursor = 34
+    end
 
     RenderGroup(page.group, page.path, page.handler, page.root, page.appName, false, page.catName)
 end
@@ -4075,8 +4282,9 @@ local function RenderSidebar()
     end
 end
 
+-- The scroll functions below work on the current view.
 local function ScrollContentBy(delta)
-    if not contentScroll then return end
+    if not V.contentScroll then return end
 
     -- Close any open dropdown first (MINOR 11). Its popup menu is
     -- positioned once, at open time, against the scroll amount current at
@@ -4088,7 +4296,7 @@ local function ScrollContentBy(delta)
         activeDropdown.SetOpen(false)
     end
 
-    SetContentScroll(contentOffset + delta, true)
+    SetContentScroll(V.offset + delta, true)
 end
 
 -- Applies an ABSOLUTE scroll offset. `fromWheel` distinguishes the two
@@ -4110,47 +4318,49 @@ end
 -- Real 1.12.1 draws the value as given.
 local function ScrollFrameValue(offset)
     if offset <= 0 or not (DetectUA and DetectUA()) then return offset end
-    local value = offset - contentMaxOffset
+    local value = offset - V.maxOffset
     if value == 0 then value = -0.01 end
     return value
 end
 
 SetContentScroll = function(offset, syncThumb)
+    local contentScroll = V.contentScroll
     if not contentScroll then return end
 
     offset = tonumber(offset) or 0
     if offset < 0 then offset = 0 end
-    if offset > contentMaxOffset then offset = contentMaxOffset end
-    contentOffset = offset
-    pcall(contentScroll.SetVerticalScroll, contentScroll, ScrollFrameValue(contentOffset))
+    if offset > V.maxOffset then offset = V.maxOffset end
+    V.offset = offset
+    pcall(contentScroll.SetVerticalScroll, contentScroll, ScrollFrameValue(V.offset))
 
-    if syncThumb and contentScrollBar then
-        contentScrollBar.SetValue(contentOffset)
+    if syncThumb and V.scrollBar then
+        V.scrollBar.SetValue(V.offset)
     end
 end
 
 FinishContentScroll = function() -- forward-declared local, assigned here
+    local contentScroll, content, scrollBar = V.contentScroll, V.content, V.scrollBar
     if not contentScroll or not content then return end
-    content:SetHeight(yCursor + 8)
+    content:SetHeight(V.yCursor + 8)
     pcall(contentScroll.UpdateScrollChildRect, contentScroll)
     pcall(contentScroll.SetVerticalScroll, contentScroll, 0)
-    contentOffset = 0
+    V.offset = 0
     local ch = content:GetHeight() or 0
     local sh = FrameHeight(contentScroll) or 0
-    contentMaxOffset = ch - sh
-    if contentMaxOffset < 0 then contentMaxOffset = 0 end
+    V.maxOffset = ch - sh
+    if V.maxOffset < 0 then V.maxOffset = 0 end
 
-    if contentScrollBar then
-        if contentMaxOffset > 0 then
-            contentScrollBar.SetShown(true)
+    if scrollBar then
+        if V.maxOffset > 0 then
+            scrollBar.SetShown(true)
             -- Thumb length = how much of the content is visible, so its
             -- size tells you how long the page is at a glance.
             local ratio = 1
             if ch > 0 then ratio = sh / ch end
-            contentScrollBar.SetRange(contentMaxOffset, ratio)
-            contentScrollBar.SetValue(0)
+            scrollBar.SetRange(V.maxOffset, ratio)
+            scrollBar.SetValue(0)
         else
-            contentScrollBar.SetShown(false)
+            scrollBar.SetShown(false)
         end
     end
 end
@@ -4172,26 +4382,33 @@ local function PageStillExists(page)
     return group == page.group
 end
 
-local refreshingPage = false
-
-RefreshOpenPage = function() -- forward-declared local, assigned here
-    if not currentPage or refreshingPage then return end
+RefreshView = function(view) -- forward-declared local, assigned here
+    if not view.currentPage or view.refreshing then return end
 
     -- Re-entrancy guard: re-rendering hides the widgets that are running
     -- right now, and hiding a focused EditBox fires its focus-lost
     -- handler, which commits a value, which can land back here.
-    refreshingPage = true
+    view.refreshing = true
+    V = view
 
-    -- Walk up to the nearest page that still exists (see PageStillExists).
-    -- The parent chain was built by the same walk that produced this page,
-    -- so an ancestor is only ever missing if it was deleted too.
-    local page = currentPage
-    while page and not PageStillExists(page) do
-        page = page.parent
+    -- An embedded view rebuilds its page from the registry (see lib:Embed).
+    -- Otherwise walk up to the nearest page that still exists (see
+    -- PageStillExists): the parent chain was built by the same walk that
+    -- produced this page, so an ancestor is only ever missing if it was
+    -- deleted too.
+    local page
+    if view.resolvePage then
+        page = view.resolvePage()
+    else
+        page = view.currentPage
+        while page and not PageStillExists(page) do
+            page = page.parent
+        end
     end
 
     if page then
-        local samePage = (page == currentPage)
+        -- By id: a rebuilt page is a new table for the same page.
+        local samePage = (page.id == view.currentPage.id)
         -- The offset is only worth keeping when the same page is being
         -- redrawn; landing on a different page after a deletion should
         -- start at its top. It has to be re-applied AFTER
@@ -4199,23 +4416,89 @@ RefreshOpenPage = function() -- forward-declared local, assigned here
         -- content and resets the scroll as part of that; SetContentScroll
         -- then clamps against the NEW extent, so a page that got shorter
         -- still lands somewhere valid.
-        local offset = contentOffset
-        activePageId = page.id
+        local offset = view.offset
         RenderContent(page)
-        RenderSidebar()
+        if view == panelView then
+            activePageId = page.id
+            RenderSidebar()
+        end
         FinishContentScroll()
         if samePage then SetContentScroll(offset, true) end
     end
 
-    refreshingPage = false
+    view.refreshing = false
 end
 
 SelectPage = function(page) -- forward-declared local, assigned here
     if not page then return end
+    V = panelView
     activePageId = page.id
     RenderContent(page)
     RenderSidebar()
     FinishContentScroll()
+end
+
+-- Creates a view's ScrollFrame, its content frame (the scroll child, as wide
+-- as the view's rows) and the scrollbar, all under `parent`. The caller
+-- anchors `view.contentScroll`; the scrollbar sits in the SCROLLBAR_GUTTER
+-- strip to its right. `names` gives the three frames their global names.
+local function CreateViewFrames(view, parent, names)
+    local contentScroll = CreateFrame("ScrollFrame", names.scroll, parent)
+    local content = CreateFrame("Frame", names.content, contentScroll)
+    content:SetWidth(view.width)
+    contentScroll:SetScrollChild(content)
+
+    -- Proper scrollbar down the right-hand gutter (MINOR 11), replacing
+    -- the pair of loose "^"/"v" buttons that used to live in the footer
+    -- next to Close.
+    --
+    -- HISTORY WORTH KEEPING, because it constrains where this can go.
+    -- Originally the two buttons were anchored to `contentScroll`'s OWN
+    -- bottom-right corner -- i.e. INSIDE the rectangle `contentScroll`
+    -- uses for its viewport -- and, being siblings under `panel` rather
+    -- than children of the ScrollFrame, its clipping never hid them. They
+    -- sat permanently on top of whatever content scrolled into that
+    -- corner and silently stole its clicks: a live report found a
+    -- "select" near the bottom of a 15-item group whose OnEnter/tooltip
+    -- fired but whose OnClick never opened the menu, fixed purely by
+    -- moving that field earlier in the list. MINOR 7 moved them into the
+    -- footer to get them out of the viewport entirely.
+    --
+    -- The scrollbar cannot go back on top of the content for exactly that
+    -- reason, so `contentScroll`'s right edge is pulled in by
+    -- SCROLLBAR_GUTTER (and the view's width with it) and the bar occupies
+    -- the strip that frees up -- a real gutter, never an overlay.
+    local scrollBar = CreateScrollBar(parent, {
+        name = names.scrollBar,
+        step = ROW_HEIGHT,
+        onScroll = function(offset)
+            V = view
+            SetContentScroll(offset)
+        end,
+    })
+    scrollBar.frame:SetPoint("TOPLEFT", contentScroll, "TOPRIGHT", 4, 0)
+    scrollBar.frame:SetPoint("BOTTOMLEFT", contentScroll, "BOTTOMRIGHT", 4, 0)
+    scrollBar.SetShown(false)
+    -- Deliberately NOT added to `panelChrome`: that list is toggled with a
+    -- plain Show/Hide per entry, and children don't reliably follow a
+    -- parent's visibility on this client, so the bar's own arrows and
+    -- thumb would linger. Its visibility is driven by SetShown instead --
+    -- from FinishContentScroll (does this page even overflow?) and from
+    -- the view's own show/hide paths.
+
+    pcall(contentScroll.EnableMouseWheel, contentScroll, true)
+    contentScroll:SetScript("OnMouseWheel", function(a1, a2)
+        local delta = arg1
+        if type(a1) == "number" then delta = a1 end
+        if type(a2) == "number" then delta = a2 end
+        if type(delta) ~= "number" then delta = 0 end
+        V = view
+        ScrollContentBy(-delta * ROW_HEIGHT * 3)
+    end)
+
+    view.contentScroll = contentScroll
+    view.content = content
+    view.scrollBar = scrollBar
 end
 
 local function Build()
@@ -4247,8 +4530,9 @@ local function Build()
             pcall(focusedEditBox.ClearFocus, focusedEditBox)
             focusedEditBox = nil
         end
+        V = panelView
         SetListShown(panelChrome, false)
-        if contentScrollBar then contentScrollBar.SetShown(false) end
+        if panelView.scrollBar then panelView.scrollBar.SetShown(false) end
         if sidebarScrollBar then sidebarScrollBar.SetShown(false) end
         ClearContent()
     end)
@@ -4340,16 +4624,18 @@ local function Build()
         RenderSidebar()
     end)
 
-    contentScroll = CreateFrame("ScrollFrame", "LibConfigContentScroll", panel)
+    CreateViewFrames(panelView, panel, {
+        scroll = "LibConfigContentScroll",
+        content = "LibConfigContent",
+        scrollBar = "LibConfigScrollBar",
+    })
+    panelView.menuParent = panel
+    local contentScroll = panelView.contentScroll
     contentScroll:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", MARGIN, 0)
     -- Right edge pulled in by SCROLLBAR_GUTTER so the scrollbar has a strip
     -- of its own to live in, outside the scrollable viewport (CONTENT_WIDTH
     -- is reduced by the same amount).
     contentScroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -MARGIN - SCROLLBAR_GUTTER, FOOTER_HEIGHT)
-
-    content = CreateFrame("Frame", "LibConfigContent", contentScroll)
-    content:SetWidth(CONTENT_WIDTH)
-    contentScroll:SetScrollChild(content)
 
     panel.close = CreateButton(panel, {
         name = "LibConfigClose",
@@ -4361,55 +4647,11 @@ local function Build()
     panel.close:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -MARGIN, MARGIN)
     table.insert(panelChrome, panel.close)
 
-    -- Proper scrollbar down the right-hand gutter (MINOR 11), replacing
-    -- the pair of loose "^"/"v" buttons that used to live in the footer
-    -- next to Close.
-    --
-    -- HISTORY WORTH KEEPING, because it constrains where this can go.
-    -- Originally the two buttons were anchored to `contentScroll`'s OWN
-    -- bottom-right corner -- i.e. INSIDE the rectangle `contentScroll`
-    -- uses for its viewport -- and, being siblings under `panel` rather
-    -- than children of the ScrollFrame, its clipping never hid them. They
-    -- sat permanently on top of whatever content scrolled into that
-    -- corner and silently stole its clicks: a live report found a
-    -- "select" near the bottom of a 15-item group whose OnEnter/tooltip
-    -- fired but whose OnClick never opened the menu, fixed purely by
-    -- moving that field earlier in the list. MINOR 7 moved them into the
-    -- footer to get them out of the viewport entirely.
-    --
-    -- The scrollbar cannot go back on top of the content for exactly that
-    -- reason, so `contentScroll`'s right edge is pulled in by
-    -- SCROLLBAR_GUTTER (and CONTENT_WIDTH with it) and the bar occupies
-    -- the strip that frees up -- a real gutter, never an overlay.
-    contentScrollBar = CreateScrollBar(panel, {
-        name = "LibConfigScrollBar",
-        step = ROW_HEIGHT,
-        onScroll = function(offset) SetContentScroll(offset) end,
-    })
-    contentScrollBar.frame:SetPoint("TOPLEFT", contentScroll, "TOPRIGHT", 4, 0)
-    contentScrollBar.frame:SetPoint("BOTTOMLEFT", contentScroll, "BOTTOMRIGHT", 4, 0)
-    contentScrollBar.SetShown(false)
-    -- Deliberately NOT added to `panelChrome`: that list is toggled with a
-    -- plain Show/Hide per entry, and children don't reliably follow a
-    -- parent's visibility on this client, so the bar's own arrows and
-    -- thumb would linger. Its visibility is driven by SetShown instead --
-    -- from FinishContentScroll (does this page even overflow?) and from
-    -- the panel's own show/hide paths.
-
-    pcall(contentScroll.EnableMouseWheel, contentScroll, true)
-    contentScroll:SetScript("OnMouseWheel", function(a1, a2)
-        local delta = arg1
-        if type(a1) == "number" then delta = a1 end
-        if type(a2) == "number" then delta = a2 end
-        if type(delta) ~= "number" then delta = 0 end
-        ScrollContentBy(-delta * ROW_HEIGHT * 3)
-    end)
-
     panel:Hide()
     sidebar:Hide()
     contentScroll:Hide()
     SetListShown(panelChrome, false)
-    contentScrollBar.SetShown(false)
+    panelView.scrollBar.SetShown(false)
     sidebarScrollBar.SetShown(false)
 end
 
@@ -4471,8 +4713,8 @@ function lib:Open(appName, name)
     -- hidden parent does not render its Button/backdrop regions).
     panel:Show()
     sidebar:Show()
-    contentScroll:Show()
-    content:Show()
+    panelView.contentScroll:Show()
+    panelView.content:Show()
     SetListShown(panelChrome, true)
     SelectPage(BuildRootPage(cat))
 end
@@ -4498,12 +4740,22 @@ end
 -- notifies several times -- or notifies while the widget that triggered it
 -- is still running -- costs one rebuild, after that widget is done.
 --
--- `appName` is accepted for call-site compatibility and ignored: this
--- library shows exactly one page at a time, and that page is what gets
--- redrawn.
+-- The options window is redrawn whatever `appName` says: it shows exactly one
+-- page at a time, and that page is what gets redrawn. An embedded view (see
+-- lib:Embed) is redrawn when its open page belongs to `appName`, or for a
+-- nil `appName`.
 local notifyDriver
 function lib:NotifyChange(appName)
-    if not (panel and panel:IsShown()) then return end
+    local pending = panel and panel:IsShown()
+    local i
+    for i = 1, table.getn(embeddedViews) do
+        local view = embeddedViews[i]
+        if view.currentPage and (appName == nil or view.currentPage.appName == appName) then
+            view.notifyPending = true
+            pending = true
+        end
+    end
+    if not pending then return end
 
     if not notifyDriver then
         notifyDriver = CreateFrame("Frame", nil, UIParent)
@@ -4514,7 +4766,15 @@ function lib:NotifyChange(appName)
             -- re-entering from whatever the refresh itself triggers.
             notifyDriver:Hide()
             if panel and panel:IsShown() then
-                RefreshOpenPage()
+                RefreshView(panelView)
+            end
+            local j
+            for j = 1, table.getn(embeddedViews) do
+                local view = embeddedViews[j]
+                if view.notifyPending then
+                    view.notifyPending = nil
+                    RefreshView(view)
+                end
             end
         end)
     end
@@ -4524,4 +4784,177 @@ end
 
 function lib:Close()
     if panel then panel:Hide() end
+end
+
+-- ===========================================================================
+-- Embedded views
+-- ===========================================================================
+
+-- The page for the group at `path` (a list of arg keys) inside a category,
+-- built the same way CollectChildPages builds a child page; nil if the
+-- category or any group on the path is missing. `cat` is a registered
+-- category or an unregistered { appName, name, table } of the same shape.
+local function BuildEmbeddedPage(cat, path)
+    if not (cat and cat.table) then return nil end
+    local appName, name = cat.appName, cat.name
+
+    local page = BuildRootPage(cat)
+    local i
+    for i = 1, table.getn(path) do
+        local key = path[i]
+        local args = page.group.args
+        local opt = (type(args) == "table") and args[key] or nil
+        if type(opt) ~= "table" or opt.type ~= "group" then return nil end
+
+        local newPath = NewPath(page.path, key)
+        local newHandler = opt.handler or page.handler
+        page = {
+            id = BuildPageId(appName, name, newPath),
+            appName = appName,
+            catName = name,
+            group = opt,
+            path = newPath,
+            handler = newHandler,
+            root = page.root,
+            depth = page.depth + 1,
+            parent = page,
+            displayName = tostring(ResolveMember("name", page.root, appName, newPath, newHandler, key, opt) or key),
+            children = {},
+        }
+    end
+    return page
+end
+
+--- Renders options pages into `frame`, a frame of the host addon, instead of
+-- the options window: no sidebar and no page title, the page's own
+-- childGroups="tab" strip (if any) on top, and the scrollbar in a
+-- SCROLLBAR_GUTTER-wide strip down the frame's right edge while the page
+-- overflows. Every widget, commit and refresh rule is the options window's.
+--
+-- options (all optional):
+--   name        global name prefix for the view's frames
+--   width       width the rows are laid out to; default: the frame's width
+--               minus the scrollbar gutter and a 6 px safety margin, read
+--               when lib:Embed is called, so size the frame first
+--   labelWidth  width of the name column left of a control (default 200)
+--   menuParent  frame the dropdown menus are parented to (default: `frame`)
+--
+-- Returns a handle:
+--   handle:Open(appName, name[, path])  renders a registered category, or
+--       the group at `path` (a list of arg keys) inside it. `frame` has to
+--       be shown: on Unreal Azeroth a widget created under a hidden frame
+--       does not render its button/backdrop regions.
+--   handle:OpenTable(optionsTable, appName[, path])  the same for a table
+--       that is not registered, so it never shows up in the options
+--       window's sidebar. `appName` is what lib:NotifyChange matches.
+--   handle:Refresh()  redraws the open page from its table, so every
+--       widget re-reads its `get` (lib:NotifyChange does this too).
+--   handle:Close()  hides the page and releases its widgets. Call it when
+--       `frame` is hidden: on Unreal Azeroth hiding a frame does not hide
+--       its children.
+--   handle:IsOpen()
+--
+-- The library's own vertical scrollbar (MINOR 4), for an addon's scrolling
+-- list: the same widget the options pages and the dropdown menus use, with
+-- the drag handling that works on both clients (AttachThumbDrag). It drives
+-- an offset in pixels and does no scrolling itself.
+--   options.name      global name prefix of its frames (optional)
+--   options.step      pixels an arrow button moves (default: one row)
+--   options.onScroll  function(offset), on every user change
+-- Returns a control: control.frame (anchor its TOP/BOTTOM, it is 16 px
+-- wide), control.upBtn / downBtn / track / thumb (every piece, for an
+-- addon that shows and hides frames one by one), control.SetRange(
+-- maxOffset, visibleRatio), control.SetValue(offset[, notify]),
+-- control.GetValue(), control.SetShown(shown).
+function lib:CreateScrollBar(parent, options)
+    return CreateScrollBar(parent, options)
+end
+
+function lib:Embed(frame, options)
+    options = options or {}
+
+    local view = NewView()
+    view.showTitle = false
+    view.labelWidth = options.labelWidth or LABEL_WIDTH
+    view.width = options.width
+        or ((FrameWidth(frame) or (CONTENT_WIDTH + SCROLLBAR_GUTTER + 6)) - SCROLLBAR_GUTTER - 6)
+    view.controlWidth = view.width - view.labelWidth - CONTROL_GAP
+    view.menuParent = options.menuParent or frame
+
+    local prefix = options.name
+    CreateViewFrames(view, frame, {
+        scroll = prefix and (prefix .. "Scroll") or nil,
+        content = prefix and (prefix .. "Content") or nil,
+        scrollBar = prefix and (prefix .. "ScrollBar") or nil,
+    })
+    view.contentScroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    view.contentScroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -SCROLLBAR_GUTTER, 0)
+    view.contentScroll:Hide()
+    view.content:Hide()
+    table.insert(embeddedViews, view)
+
+    -- What handle:Open / handle:OpenTable was last called with. The page is
+    -- rebuilt from it on every refresh rather than kept, so an options table
+    -- that was re-registered or restructured since is what gets drawn.
+    local opened
+    view.resolvePage = function()
+        if not opened then return nil end
+        local cat = opened.cat or FindCategory(opened.appName, opened.name)
+        return BuildEmbeddedPage(cat, opened.path)
+    end
+
+    local handle = {}
+
+    function handle:Close()
+        -- Cleared first: taking the focus away below commits a pending edit,
+        -- and the refresh that commit asks for must find nothing to draw.
+        opened = nil
+        if focusedEditBox then
+            pcall(focusedEditBox.ClearFocus, focusedEditBox)
+            focusedEditBox = nil
+        end
+        V = view
+        ClearContent()
+        view.scrollBar.SetShown(false)
+        view.contentScroll:Hide()
+        view.content:Hide()
+        view.currentPage = nil
+        view.notifyPending = nil
+    end
+
+    local function Render()
+        local page = view.resolvePage()
+        if not page then
+            handle:Close()
+            return
+        end
+        V = view
+        view.contentScroll:Show()
+        view.content:Show()
+        RenderContent(page)
+        FinishContentScroll()
+    end
+
+    function handle:Open(appName, name, path)
+        opened = { appName = appName, name = name, path = path or {} }
+        Render()
+    end
+
+    function handle:OpenTable(optionsTable, appName, path)
+        opened = {
+            cat = { appName = appName, name = appName, table = optionsTable },
+            path = path or {},
+        }
+        Render()
+    end
+
+    function handle:Refresh()
+        if opened then RefreshView(view) end
+    end
+
+    function handle:IsOpen()
+        return opened ~= nil
+    end
+
+    return handle
 end
