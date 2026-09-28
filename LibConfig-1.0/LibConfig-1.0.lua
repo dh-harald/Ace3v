@@ -1071,6 +1071,12 @@ local function CreateDropdown(parent, options)
     CreateBackdrop(menu, { background = THEME.backdrop })
     menu:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -1)
     pcall(menu.SetFrameLevel, menu, 100)
+    -- Kept on the screen, as AceGUI's dropdown pullout is: a menu that
+    -- would run off the bottom edge is pushed up, over its button if need
+    -- be. Off the screen, its end could not be reached (its "v" button
+    -- would be off the screen too, and the wheel does not work on Unreal
+    -- Azeroth).
+    pcall(menu.SetClampedToScreen, menu, true)
     control.menu = menu
 
     -- Live media previews -- `options.previewType` ("font" or "statusbar")
