@@ -19,7 +19,7 @@
 --
 -- Distributed as a LibStub embedded minor, like Ace3.
 
-local MAJOR, MINOR = "LibConfig-1.0", 5
+local MAJOR, MINOR = "LibConfig-1.0", 6
 local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return -- already loaded (older/newer minor)
@@ -4337,11 +4337,38 @@ local function AppendPageRows(rows, page)
     end
 end
 
-local function BuildVisibleRows()
-    local rows = {}
+-- Sort key of a root category: its name without colour codes, ignoring case.
+local function CategorySortKey(cat)
+    local key = string.gsub(cat.name, "|c%x%x%x%x%x%x%x%x", "")
+    key = string.gsub(key, "|r", "")
+    return string.lower(key)
+end
+
+-- Root categories are listed alphabetically, like the AddOns tab of the
+-- native Interface Options, not in registration order: addons register at
+-- different points of their load (file load, ADDON_LOADED, PLAYER_LOGIN),
+-- and Unreal Azeroth fires ADDON_LOADED later than the 1.12.1 client, so
+-- registration order differs between the two clients.
+local function SortedCategories()
+    local list = {}
     local i
     for i = 1, table.getn(lib.categories) do
-        local cat = lib.categories[i]
+        list[i] = lib.categories[i]
+    end
+    table.sort(list, function(a, b)
+        local ka, kb = CategorySortKey(a), CategorySortKey(b)
+        if ka ~= kb then return ka < kb end
+        return a.appName < b.appName
+    end)
+    return list
+end
+
+local function BuildVisibleRows()
+    local rows = {}
+    local categories = SortedCategories()
+    local i
+    for i = 1, table.getn(categories) do
+        local cat = categories[i]
         if cat.table then
             AppendPageRows(rows, BuildRootPage(cat))
         end
