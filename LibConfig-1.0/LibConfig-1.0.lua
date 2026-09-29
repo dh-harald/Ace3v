@@ -19,7 +19,7 @@
 --
 -- Distributed as a LibStub embedded minor, like Ace3.
 
-local MAJOR, MINOR = "LibConfig-1.0", 4
+local MAJOR, MINOR = "LibConfig-1.0", 5
 local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return -- already loaded (older/newer minor)
@@ -47,6 +47,9 @@ local THEME = {
     -- text
     text         = { 1.00, 1.00, 1.00, 1.00 },
     textDim      = { 0.60, 0.60, 0.60, 1.00 },
+    -- the message under a control whose value `validate` rejected
+    -- (see ValidateValue)
+    error        = { 1.00, 0.30, 0.30, 1.00 },
     -- flat white texture tinted via SetVertexColor for everything
     plain        = "Interface\\BUTTONS\\WHITE8X8",
 }
@@ -799,6 +802,39 @@ local function CreateCheckbox(parent, options)
 end
 
 -- ===========================================================================
+-- Draw order
+--
+-- Unreal Azeroth only re-sorts its draw order when a frame is created or
+-- reparented. A frame that is shown, or gets its level, after the last such
+-- event is drawn at a stale position: a dropdown menu
+-- shown on click opened BEHIND the options window's background, so the
+-- button seemed to do nothing, until any other frame creation re-sorted it.
+-- Reparenting an empty frame, even to the parent it already has, forces
+-- the re-sort. It has to happen on the NEXT frame: a re-sort in the same
+-- frame as the show/level change still sees the old order (measured on
+-- PunyAuras' options list, whose ResortDrawOrder this is).
+--
+-- Called after every page render (FinishContentScroll), whenever a
+-- dropdown menu shows rows, and when the color dialog opens. Several
+-- requests in one frame collapse into one re-sort. Harmless on the 1.12.1
+-- client, where it is not needed.
+-- ===========================================================================
+local drawOrderFrame, drawOrderTimer
+
+local function ResortOnNextFrame()
+    drawOrderTimer:SetScript("OnUpdate", nil)
+    pcall(drawOrderFrame.SetParent, drawOrderFrame, UIParent)
+end
+
+local function ResortDrawOrder()
+    if not drawOrderFrame then
+        drawOrderFrame = CreateFrame("Frame", nil, UIParent)
+        drawOrderTimer = CreateFrame("Frame", nil, UIParent)
+    end
+    drawOrderTimer:SetScript("OnUpdate", ResortOnNextFrame)
+end
+
+-- ===========================================================================
 -- Text input
 --
 -- ADDED (MINOR 7): `type = "input"` was not handled by RenderLeaf at all --
@@ -958,6 +994,9 @@ local function CreateEditBox(parent, options)
     edit:SetScript("OnEscapePressed", function()
         edit:SetText(control.value or "")
         pcall(edit.ClearFocus, edit)
+        if type(options.onEscape) == "function" then
+            options.onEscape()
+        end
     end)
 
     control.SetValue = function(value)
@@ -971,6 +1010,13 @@ local function CreateEditBox(parent, options)
     end
 
     control.SetValue(options.value)
+    -- `text`: shown in place of the value while `value` stays the baseline
+    -- a commit is compared against and Escape returns to -- a value the
+    -- option's `validate` rejected is redrawn this way, so it stays
+    -- editable without counting as accepted.
+    if options.text then
+        edit:SetText(options.text)
+    end
     return control
 end
 
@@ -1150,6 +1196,8 @@ local function CreateDropdown(parent, options)
                 row:Show()
             end
         end
+        -- The menu and its rows are shown long after they were created.
+        ResortDrawOrder()
     end
 
     local function ScrollToSelected()
@@ -2818,6 +2866,7 @@ local function CreateColorPicker(parent, options)
         d:ClearAllPoints()
         d:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         d:Show()
+        ResortDrawOrder()
     end)
 
     control.SetValue(options.value)
@@ -2968,6 +3017,127 @@ local function ResolveMember(memberName, root, appName, path, handler, arg, opti
         return handler[member](handler, info, a1, a2)
     end
     return nil
+end
+
+-- The height a `description` needs to show all of `text` wrapped at
+-- `width`, in GameFontNormalSmall. Neither client has
+-- FontString:GetStringHeight, and a FontString given a fixed height cuts
+-- off whatever does not fit, so the wrapping is simulated: words are laid
+-- onto lines greedily, each candidate line measured with GetStringWidth
+-- (the natural, unwrapped width) on a hidden FontString of the same font;
+-- a word wider than a line takes as many lines as it covers, since the
+-- label breaks inside words (SetNonSpaceWrap). Line breaks in the text
+-- start a new line. The line height is the font's size plus a third
+-- (GetFont's size, which both clients report); DESC_H stays the minimum,
+-- so a one-line description keeps its old row.
+local descMeasure
+local function DescriptionHeight(text, width)
+    text = tostring(text or "")
+    if not descMeasure then
+        local ok, fs = pcall(UIParent.CreateFontString, UIParent, nil, "ARTWORK", "GameFontNormalSmall")
+        if not ok or not fs then return DESC_H end
+        pcall(fs.SetPoint, fs, "TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+        pcall(fs.SetAlpha, fs, 0)
+        pcall(fs.Hide, fs)
+        descMeasure = fs
+    end
+
+    local function Measure(s)
+        pcall(descMeasure.SetText, descMeasure, s)
+        local ok, w = pcall(descMeasure.GetStringWidth, descMeasure)
+        if ok and type(w) == "number" then return w end
+        return string.len(s) * 6
+    end
+
+    local lines = 0
+    local start = 1
+    while start <= string.len(text) + 1 do
+        local nl = string.find(text, "\n", start, true)
+        local paragraph
+        if nl then
+            paragraph = string.sub(text, start, nl - 1)
+        else
+            paragraph = string.sub(text, start)
+        end
+
+        local line = ""
+        local paragraphLines = 1
+        local pos = 1
+        while true do
+            local _, e, word = string.find(paragraph, "(%S+)", pos)
+            if not word then break end
+            pos = e + 1
+            local candidate = (line == "") and word or (line .. " " .. word)
+            if line ~= "" and Measure(candidate) > width then
+                paragraphLines = paragraphLines + 1
+                line = word
+            else
+                line = candidate
+            end
+            local lineWidth = Measure(line)
+            if lineWidth > width then
+                paragraphLines = paragraphLines + math.ceil(lineWidth / width) - 1
+                line = ""
+            end
+        end
+        lines = lines + paragraphLines
+
+        if not nl then break end
+        start = nl + 1
+    end
+
+    local size = 10
+    local ok, _, fontSize = pcall(descMeasure.GetFont, descMeasure)
+    if ok and type(fontSize) == "number" and fontSize > 0 then size = fontSize end
+    local height = math.ceil(lines * size * 4 / 3) + 6
+    if height < DESC_H then height = DESC_H end
+    return height
+end
+
+-- AceConfigDialog's check of a value before `set` (its ActivateControl), for
+-- every leaf type except `execute`: on an `input`, `pattern` first
+-- (string.find, so a Lua pattern as in AceConfig); then `validate`,
+-- inherited like `set` -- a function or a handler method name, called with
+-- the info table and the same arguments `set` would get: `values` holds
+-- them (value; key, checked for a multiselect; r, g, b, a for a color).
+-- Returns nil when the value may be set, or the message to show: the string
+-- `validate` returned, else "<name>: <usage>", "<name>: Expected <pattern>"
+-- or "<name>: Invalid Value" -- AceConfigDialog's own fallbacks. Only a
+-- literal `true` accepts; a `validate` that errors counts as a rejection,
+-- as there.
+local function ValidateValue(root, appName, path, handler, arg, opt, name, values)
+    local validated = true
+    local pattern = opt.pattern
+    if opt.type == "input" and type(pattern) == "string"
+        and not string.find(tostring(values[1] or ""), pattern) then
+        validated = false
+    end
+
+    local member = InheritedMember("validate", root, path, opt)
+    if validated and member ~= nil then
+        local info = BuildInfo(root, appName, path, handler, arg, opt)
+        local ok, result
+        if type(member) == "function" then
+            ok, result = pcall(member, info, values[1], values[2], values[3], values[4])
+        elseif type(member) == "string" and handler and type(handler[member]) == "function" then
+            ok, result = pcall(handler[member], handler, info, values[1], values[2], values[3], values[4])
+        end
+        if ok then
+            validated = result
+        else
+            validated = false
+        end
+    end
+
+    if validated == true then return nil end
+    if type(validated) == "string" then return validated end
+
+    local usage = ResolveMember("usage", root, appName, path, handler, arg, opt)
+    if usage then return name .. ": " .. tostring(usage) end
+    if opt.type == "input" and type(pattern) == "string" then
+        return name .. ": Expected " .. pattern
+    end
+    return name .. ": Invalid Value"
 end
 
 local function NewPath(path, key)
@@ -3199,6 +3369,35 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         RefreshView(view)
     end
 
+    -- A value `validate` rejects (see ValidateValue) is not set. The page is
+    -- redrawn with the control showing its `get` again -- an `input` keeps
+    -- the rejected text in its box, so it can be corrected -- and the
+    -- message in a line under the control (view.validationError, one per
+    -- view, keyed by the option's path) until the control passes a value
+    -- that is accepted, an input's Escape reverts it, or the view moves to
+    -- another page.
+    local errorKey = appName .. "\1" .. table.concat(path, "\1")
+    local leafError = view.validationError
+    if leafError and leafError.key ~= errorKey then leafError = nil end
+
+    -- True when the value may be set; `values` as for ValidateValue.
+    local function Accept(values)
+        local message = ValidateValue(root, appName, path, handler, arg, opt, name, values)
+        if message then
+            view.validationError = {
+                key = errorKey,
+                pageId = view.currentPage and view.currentPage.id,
+                values = values,
+                message = message,
+            }
+            return false
+        end
+        if view.validationError and view.validationError.key == errorKey then
+            view.validationError = nil
+        end
+        return true
+    end
+
     -- Dimming the NAME is the fallback disabled cue, for the control types
     -- that have no way of showing the state on themselves. A type that
     -- greys out its own control (toggle) passes false and keeps its label
@@ -3240,12 +3439,13 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         yCursor = yCursor + HEADER_H
 
     elseif t == "description" then
+        local descHeight = DescriptionHeight(name, CONTENT_WIDTH)
         local label = CreateLabel(content, {
             color = THEME.textDim,
             inherits = "GameFontNormalSmall",
             justify = "LEFT",
             width = CONTENT_WIDTH,
-            height = DESC_H,
+            height = descHeight,
             nonSpaceWrap = true,
         })
         if label then
@@ -3253,7 +3453,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             label:SetText(name)
         end
         AddWidget(label)
-        yCursor = yCursor + DESC_H + ROW_GAP
+        yCursor = yCursor + descHeight + ROW_GAP
 
     elseif t == "toggle" then
         local current = ResolveMember("get", root, appName, path, handler, arg, opt)
@@ -3262,7 +3462,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             value = current,
             disabled = disabled,
             onChange = function(v)
-                ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                if Accept({ v }) then
+                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                end
                 AfterCommit()
             end,
         })
@@ -3277,6 +3479,21 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         -- it: several lines of text next to a one-line label reads as a
         -- misaligned mess, and AceConfigDialog lays it out the same way.
         local full = (opt.width == "full") or (opt.multiline and true or false)
+
+        local function OnInputChange(v)
+            if Accept({ v }) then
+                ResolveMember("set", root, appName, path, handler, arg, opt, v)
+            end
+            AfterCommit()
+        end
+
+        local function OnInputEscape()
+            if view.validationError and view.validationError.key == errorKey then
+                view.validationError = nil
+                AfterCommit()
+            end
+        end
+        local rejectedText = leafError and leafError.values[1]
 
         if full then
             local label = CreateLabel(content, {
@@ -3295,12 +3512,11 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
 
             local eb = CreateEditBox(content, {
                 value = current,
+                text = rejectedText,
                 width = CONTENT_WIDTH,
                 multiline = opt.multiline,
-                onChange = function(v)
-                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
-                    AfterCommit()
-                end,
+                onChange = OnInputChange,
+                onEscape = OnInputEscape,
             })
             eb:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
             if desc then AttachTooltip(eb.box, desc) end
@@ -3310,11 +3526,10 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             AddNameLabel()
             local eb = CreateEditBox(content, {
                 value = current,
+                text = rejectedText,
                 width = CONTROL_WIDTH,
-                onChange = function(v)
-                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
-                    AfterCommit()
-                end,
+                onChange = OnInputChange,
+                onEscape = OnInputEscape,
             })
             eb:SetPoint("TOPLEFT", content, "TOPLEFT", LABEL_WIDTH + CONTROL_GAP, -yCursor)
             if desc then AttachTooltip(eb.box, desc) end
@@ -3383,7 +3598,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 menuParent = view.menuParent,
                 getScrollOffset = function() return view.offset end,
                 onChange = function(v)
-                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    if Accept({ v }) then
+                        ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    end
                     AfterCommit()
                 end,
             })
@@ -3401,7 +3618,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 menuParent = view.menuParent,
                 getScrollOffset = function() return view.offset end,
                 onChange = function(v)
-                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    if Accept({ v }) then
+                        ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    end
                     AfterCommit()
                 end,
             })
@@ -3460,7 +3679,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 value = ResolveMember("get", root, appName, path, handler, arg, opt, item.value),
                 disabled = disabled,
                 onChange = function(v)
-                    ResolveMember("set", root, appName, path, handler, arg, opt, item.value, v)
+                    if Accept({ item.value, v }) then
+                        ResolveMember("set", root, appName, path, handler, arg, opt, item.value, v)
+                    end
                     AfterCommit()
                 end,
             })
@@ -3499,8 +3720,13 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             isPercent = opt.isPercent,
             value = current,
             width = CONTROL_WIDTH,
+            -- Validated per value, as AceConfigDialog does on the slider's
+            -- OnValueChanged; a rejected step is not set, and the redraw on
+            -- release shows the last accepted value with the message.
             onChange = function(v)
-                ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                if Accept({ v }) then
+                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                end
             end,
             -- Deliberately NOT on onChange: that one fires for every
             -- stepped value the thumb passes through.
@@ -3549,6 +3775,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             disabled = disabled,
             text = name,
             onChange = function(color)
+                if not Accept({ color.r, color.g, color.b, color.a }) then return end
                 local setInfo = BuildInfo(root, appName, path, handler, arg, opt)
                 if type(setter) == "function" then
                     setter(setInfo, color.r, color.g, color.b, color.a)
@@ -3605,6 +3832,24 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         if desc then AttachTooltip(btn, desc) end
         AddWidget(btn)
         yCursor = yCursor + 24 + ROW_GAP
+    end
+
+    -- The message line under a control whose last value was rejected.
+    if leafError and t ~= "execute" then
+        local label = CreateLabel(content, {
+            color = THEME.error,
+            inherits = "GameFontNormalSmall",
+            justify = "LEFT",
+            width = CONTENT_WIDTH,
+            height = DESC_H,
+            nonSpaceWrap = true,
+        })
+        if label then
+            label:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
+            label:SetText(leafError.message)
+        end
+        AddWidget(label)
+        yCursor = yCursor + DESC_H + ROW_GAP
     end
 
     view.yCursor = yCursor
@@ -3957,6 +4202,11 @@ RenderContent = function(page)
     end
 
     local content = view.content
+    -- A rejected value (see ValidateValue) belongs to the page it was
+    -- entered on; any other page starts without its message.
+    if view.validationError and view.validationError.pageId ~= page.id then
+        view.validationError = nil
+    end
     view.currentPage = page
     ClearContent()
     view.yCursor = 0
@@ -4369,6 +4619,10 @@ FinishContentScroll = function() -- forward-declared local, assigned here
             scrollBar.SetShown(false)
         end
     end
+
+    -- Every render of a page (window, tab, refresh, embedded view) ends
+    -- here, after its widgets were created, levelled and shown.
+    ResortDrawOrder()
 end
 
 -- Is this page's group still where it was when the page was built? A
