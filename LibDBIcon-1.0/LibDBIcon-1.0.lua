@@ -6,7 +6,7 @@
 --
 
 local DBICON10 = "LibDBIcon-1.0"
-local DBICON10_MINOR = 45 -- Bump on changes
+local DBICON10_MINOR = 46 -- Bump on changes
 if not LibStub then error(DBICON10 .. " requires LibStub.") end
 local ldb = LibStub("LibDataBroker-1.1", true)
 if not ldb then error(DBICON10 .. " requires LibDataBroker-1.1.") end
@@ -532,12 +532,16 @@ local function createButton(name, object, db)
 	local button = CreateFrame("Button", "LibDBIcon10_"..name, Minimap)
 	button.dataObject = object
 	button.db = db
-	button:SetFrameStrata("MEDIUM")
+	-- No strata of its own: the button inherits the minimap's (BACKGROUND
+	-- natively, via MinimapCluster), so any ordinary window -- a bag column
+	-- climbing into the minimap corner -- covers it the way it covers the
+	-- minimap. Lifted by frame level instead: 20 clears the minimap and
+	-- whatever a UI layers on it (an ElvUI-style wheel catcher or re-levelled
+	-- tracking/mail icons sit a few levels above the minimap). The drag code
+	-- below lifts the level by a further 50 only for the duration of a drag.
 	button:SetWidth(31)
 	button:SetHeight(31)
-	button:SetFrameLevel(8)
-	button:SetFrameStrata("HIGH")
-	button:SetFrameLevel(7)
+	button:SetFrameLevel(20)
 	button:EnableMouse(true)
 	--button:EnableMouseWheel(true)
 	button:SetMovable(true)
