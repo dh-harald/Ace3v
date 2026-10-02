@@ -99,7 +99,11 @@ Widgets (`type`):
 - `select` — dropdown; `values` may be a table or a function, and
   `width = "full"` makes it span the content width. `dialogControl =
   "LSM30_Font"` / `"LSM30_Statusbar"` previews each LibSharedMedia entry in its
-  own font / texture.
+  own font / texture; `"LSM30_Sound"` gives each row that names a
+  LibSharedMedia sound (by its text, or else its value — so both name-keyed
+  and path-keyed `values` work) a speaker button at its right end
+  (`Media/LibConfigSpeaker.tga`, or `SetMedia{ speaker = path }`; ">" when no
+  artwork is found), which plays the sound without picking the row.
 - `multiselect` — one checkbox per `values` entry (table or function),
   sorted by text and packed into as many columns as fit, under the option's
   name. `get(info, key)` returns whether an entry is checked;
@@ -168,7 +172,8 @@ The library ships its own sprite sheets in `Media/` (`PlusMinusButton.blp` for
 the sidebar's expand/collapse markers, `SquareButtonTextures.blp` for the
 navigation arrows), so it needs no media from the host addon. Because the
 library is *embedded*, its absolute `Interface\AddOns\…` path differs per host;
-it recovers its own folder from `debugstack()` at load. If that ever fails, the
+it recovers its own folder from its chunk name — `debug.getinfo` where the
+debug library exists, otherwise `debugstack()`. If that ever fails, the
 glyphs degrade to plain `+` / `-` / `^` / `v` characters — never an error.
 
 To supply different artwork, register it before opening the window:

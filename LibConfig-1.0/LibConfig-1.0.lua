@@ -19,7 +19,7 @@
 --
 -- Distributed as a LibStub embedded minor, like Ace3.
 
-local MAJOR, MINOR = "LibConfig-1.0", 6
+local MAJOR, MINOR = "LibConfig-1.0", 7
 local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return -- already loaded (older/newer minor)
@@ -349,15 +349,19 @@ end
 -- sprite sheets ElvUI uses for exactly these jobs, brought in so the
 -- config window looks like the rest of an ElvUI-styled UI -- but this
 -- library depends on NOTHING, so the files live here rather than being
--- referenced out of some consumer addon's folder.
+-- referenced out of some consumer addon's folder. A third, own file,
+-- LibConfigSpeaker.tga (a white speaker, tinted when drawn), is the play
+-- button of a sound dropdown's rows; the 1.12.1 client has no speaker icon.
 --
 -- FINDING THE FILES IS THE ONLY HARD PART. This library is EMBEDDED, so
 -- its on-disk location differs per consumer
 -- (Interface\AddOns\ElvUI_Config\Libraries\LibConfig-1.0\ for one,
 -- Interface\AddOns\Bagzen\lib\LibConfig-1.0\ for another), and WoW texture
 -- paths are absolute from Interface\ with no relative form. DeriveOwnPath
--- below recovers it from `debugstack()`, whose traceback lines carry this
--- file's own full path -- documented on Unreal Azeroth
+-- below recovers it from this file's own chunk name: in full from
+-- `debug.getinfo` where the debug library exists (SourceFolder), otherwise
+-- from `debugstack()`, whose traceback lines carry the same name, but
+-- shortened -- documented on Unreal Azeroth
 -- (UnrealAzeroth_LuaAPI/en/globals/Helpers.md, where it also normalizes
 -- forward slashes to backslashes) and present on real 1.12.1 too.
 --
@@ -430,9 +434,28 @@ local function RebuildHead(tail)
     return best
 end
 
--- Recovers this file's own folder ("...\LibConfig-1.0\") from a traceback.
--- Returns nil rather than guessing if anything about the string is
--- unexpected -- the caller degrades to text glyphs.
+-- This file's own folder from `debug.getinfo`, or nil where the debug
+-- library is missing or the chunk name is not a file path. Its `source`
+-- field holds the chunk name UNSHORTENED -- only a traceback cuts it.
+-- Unreal Azeroth reports "Interface/AddOns/<addon>/.../LibConfig-1.0.lua":
+-- forward slashes, no leading "@" (Lua's own file-chunk marker, stripped
+-- here if present).
+local function SourceFolder()
+    if type(debug) ~= "table" or type(debug.getinfo) ~= "function" then return nil end
+    local ok, info = pcall(debug.getinfo, SourceFolder, "S")
+    if not ok or type(info) ~= "table" or type(info.source) ~= "string" then return nil end
+    local source = string.gsub(info.source, "/", "\\")
+    if string.sub(source, 1, 1) == "@" then source = string.sub(source, 2) end
+    local fileStart = string.find(source, "LibConfig%-1%.0%.lua$")
+    if not fileStart or fileStart == 1 then return nil end
+    if string.sub(source, 1, 3) == "..." then return nil end
+    return string.sub(source, 1, fileStart - 1)
+end
+
+-- Recovers this file's own folder ("...\LibConfig-1.0\"): from
+-- SourceFolder when it answers, otherwise from a traceback. Returns nil
+-- rather than guessing if anything about the string is unexpected -- the
+-- caller degrades to text glyphs.
 --
 -- Deliberately does NOT look for a literal "Interface\" prefix (a first
 -- attempt did, and came back empty in-game): the traceback's exact
@@ -446,6 +469,12 @@ end
 -- diagnosable in one line in-game:
 --     /run print(LibStub("LibConfig-1.0").mediaDebug)
 local function DeriveOwnPath()
+    local sourceFolder = SourceFolder()
+    if sourceFolder then
+        lib.mediaDebug = "debug.getinfo: " .. sourceFolder
+        return sourceFolder
+    end
+
     if type(debugstack) ~= "function" then
         lib.mediaDebug = "debugstack is not a function on this client"
         return nil
@@ -547,6 +576,10 @@ local function DeriveOwnPath()
     -- the truncation happened further up the path, where there is nothing
     -- left to reconstruct from -- return nil and let the glyphs fall back
     -- to text rather than invent a path that would silently load nothing.
+    -- Ambiguous when an intermediate folder starts the same way: in
+    -- "Interface\AddOns\MikScrollingBattleText\Lib..." the "Lib" is
+    -- "Libraries\", and this completes to a folder that does not exist
+    -- (blank glyphs). Only reached where SourceFolder has no answer.
     if partial == string.sub(LIB_FOLDER, 1, string.len(partial)) then
         return folder .. LIB_FOLDER .. "\\"
     end
@@ -563,7 +596,7 @@ end
 local mediaResolved = false
 local function EnsureMediaPath()
     if mediaResolved then return end
-    if lib.media.plusMinus and lib.media.arrows then
+    if lib.media.plusMinus and lib.media.arrows and lib.media.speaker then
         mediaResolved = true
         return
     end
@@ -572,6 +605,7 @@ local function EnsureMediaPath()
     if not ownPath then return end
     lib.media.plusMinus = lib.media.plusMinus or (ownPath .. "Media\\PlusMinusButton")
     lib.media.arrows = lib.media.arrows or (ownPath .. "Media\\SquareButtonTextures")
+    lib.media.speaker = lib.media.speaker or (ownPath .. "Media\\LibConfigSpeaker")
     mediaResolved = true
 end
 
@@ -591,26 +625,30 @@ local GLYPH_TEXCOORDS = {
     DOWN  = { 0.453125, 0.640625, 0.203125, 0.015625 },
     LEFT  = { 0.234375, 0.421875, 0.015625, 0.203125 },
     RIGHT = { 0.421875, 0.234375, 0.015625, 0.203125 },
+    SPEAKER = { 0, 1, 0, 1 },
 }
 
 -- Which registered sheet each glyph is cut from.
 local GLYPH_SHEET = {
     PLUS = "plusMinus", MINUS = "plusMinus",
     UP = "arrows", DOWN = "arrows", LEFT = "arrows", RIGHT = "arrows",
+    SPEAKER = "speaker",
 }
 
 -- What to draw when the consumer registered no artwork.
 local GLYPH_TEXT = {
     PLUS = "+", MINUS = "-", UP = "^", DOWN = "v", LEFT = "<", RIGHT = ">",
+    SPEAKER = ">",
 }
 
---- media  table with any of: plusMinus, arrows (texture paths).
+--- media  table with any of: plusMinus, arrows, speaker (texture paths).
 --- Call before opening the panel. Merges, so it can be called repeatedly.
 function lib:SetMedia(media)
     if type(media) ~= "table" then return end
     lib.media = lib.media or {}
     if media.plusMinus then lib.media.plusMinus = media.plusMinus end
     if media.arrows then lib.media.arrows = media.arrows end
+    if media.speaker then lib.media.speaker = media.speaker end
 end
 
 local function GlyphPath(glyphName)
@@ -1125,8 +1163,8 @@ local function CreateDropdown(parent, options)
     pcall(menu.SetClampedToScreen, menu, true)
     control.menu = menu
 
-    -- Live media previews -- `options.previewType` ("font" or "statusbar")
-    -- plus a `previewPath` on each item (the already-resolved LSM path)
+    -- Live media previews -- `options.previewType` ("font", "statusbar" or
+    -- "sound") plus a `previewPath` on each item (the already-resolved LSM path)
     -- renders each row using the ACTUAL media it represents, matching real
     -- ElvUI's/AceGUI's own LSM30_Font/LSM30_Statusbar dialog controls
     -- (source/ElvUI-vanilla, AceGUI-3.0-SharedMediaWidgets) -- and,
@@ -1157,10 +1195,39 @@ local function CreateDropdown(parent, options)
             row.previewTexture = preview
         end
 
+        -- A sound row gets a small play button at its right end, as
+        -- AceGUI's LSM30_Sound and WeakAuras' sound dropdown rows have. It
+        -- is a child button, so a click on it plays without picking the row.
+        -- The path came from LSM:Fetch, which already hands out the form
+        -- the running client plays.
+        local labelWidth = width - 16
+        if options.previewType == "sound" and item.previewPath then
+            local playSize = rowHeight - 4
+            local play = CreateButton(row, {
+                width = playSize,
+                height = playSize,
+                onClick = function()
+                    pcall(PlaySoundFile, row.item.previewPath, "Master")
+                end,
+            })
+            play:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+            -- The speaker in the accent colour, filling the button but its
+            -- 1px border, rather than SetButtonGlyph's inset size.
+            SetButtonGlyph(play, "SPEAKER")
+            if play.glyph then
+                pcall(play.glyph.SetWidth, play.glyph, playSize - 2)
+                pcall(play.glyph.SetHeight, play.glyph, playSize - 2)
+                pcall(play.glyph.SetVertexColor, play.glyph,
+                    THEME.accent[1], THEME.accent[2], THEME.accent[3], THEME.accent[4])
+            end
+            row.playButton = play
+            labelWidth = labelWidth - playSize - 3
+        end
+
         if row.label then
             row.label:ClearAllPoints()
             row.label:SetPoint("LEFT", row, "LEFT", 7, BUTTON_LABEL_OFFSET_Y)
-            pcall(row.label.SetWidth, row.label, width - 16)
+            pcall(row.label.SetWidth, row.label, labelWidth)
             pcall(row.label.SetJustifyH, row.label, "LEFT")
             if options.previewType == "font" and item.previewPath then
                 -- Renders the row's OWN name using the font it names --
@@ -1188,12 +1255,16 @@ local function CreateDropdown(parent, options)
             -- SetPoint below negates it back to WoW's negative-Y convention.
             local rowTop = rowsTop + 1 + (i - 1) * rowHeight - menuOffset
             local rowBottom = rowTop + rowHeight
+            -- A row's play button is shown and hidden with it: on Unreal
+            -- Azeroth a parent's Hide() does not hide its children.
             if rowTop >= rowsBottom or rowBottom <= rowsTop then
                 row:Hide()
+                if row.playButton then row.playButton:Hide() end
             else
                 row:ClearAllPoints()
                 row:SetPoint("TOPLEFT", menu, "TOPLEFT", 1, -rowTop)
                 row:Show()
+                if row.playButton then row.playButton:Show() end
             end
         end
         -- The menu and its rows are shown long after they were created.
@@ -1317,6 +1388,7 @@ local function CreateDropdown(parent, options)
             local i
             for i = 1, table.getn(control.rows) do
                 control.rows[i]:Hide()
+                if control.rows[i].playButton then control.rows[i].playButton:Hide() end
             end
         end
     end
@@ -3558,19 +3630,32 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         -- CreateDropdown) and hands it to the dropdown as `previewPath`,
         -- which renders a live preview per row -- see CreateDropdown's own
         -- comment for the full "also doubles as a diagnostic" reasoning.
+        --
+        -- `"LSM30_Sound"` gives each row a play button instead. A sound
+        -- item is looked up by its TEXT first, then its value, without the
+        -- LSM default: the values may be keyed by LSM name (AceGUI's own
+        -- convention) or by path with the name as text (WeakAuras'
+        -- sound_types); an entry that is no LSM sound ("Custom") gets no
+        -- button.
         local previewType = nil
         if opt.dialogControl == "LSM30_Font" then
             previewType = "font"
         elseif opt.dialogControl == "LSM30_Statusbar" then
             previewType = "statusbar"
+        elseif opt.dialogControl == "LSM30_Sound" then
+            previewType = "sound"
         end
         if previewType then
-            local mediaType = (previewType == "font") and "font" or "statusbar"
             local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
             if LSM then
                 local j
                 for j = 1, table.getn(items) do
-                    items[j].previewPath = LSM:Fetch(mediaType, items[j].value)
+                    if previewType == "sound" then
+                        items[j].previewPath = LSM:Fetch("sound", items[j].text, true)
+                            or LSM:Fetch("sound", items[j].value, true)
+                    else
+                        items[j].previewPath = LSM:Fetch(previewType, items[j].value)
+                    end
                 end
             end
         end
