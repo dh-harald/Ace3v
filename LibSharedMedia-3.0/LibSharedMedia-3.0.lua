@@ -9,7 +9,7 @@ Dependencies: LibStub, CallbackHandler-1.0
 License: LGPL v2.1
 ]]
 
-local MAJOR, MINOR = "LibSharedMedia-3.0", 1120002 -- 1.12.1 / increase manually on changes
+local MAJOR, MINOR = "LibSharedMedia-3.0", 1120003 -- 1.12.1 / increase manually on changes
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 
 if not lib then return end
@@ -189,30 +189,14 @@ function lib:Register(mediatype, key, data, langmask)
 	return true
 end
 
--- Unreal Azeroth (the UE5 rewrite of the 1.12.1 client) finds an addon's
--- sound file only as "../../Interface/AddOns/<addon>/<file>" with "/"
--- separators -- relative to the client's working directory, the
--- executable's folder. The usual "Interface\AddOns\..." path stays silent
--- there although PlaySoundFile returns 1. The client's own "Sound\..." files
--- play unchanged. GetUECvar is the Unreal engine's cvar accessor and exists
--- on no Blizzard client; 5875 is Unreal Azeroth's interface number.
-local isUA = false
-if GetUECvar then
-	isUA = true
-elseif type(GetBuildInfo) == "function" then
-	local ok, _, _, _, tocversion = pcall(GetBuildInfo)
-	if ok and tonumber(tocversion) == 5875 then isUA = true end
-end
-
--- The path the running client plays the sound file `path` from. Sounds are
--- registered, kept (HashTable, List) and stored by addons in the standard
--- form; Fetch("sound", key) hands out this form, so an addon playing what
--- it fetched needs no client check. An addon that plays a path it holds
--- itself (one typed in by the user) passes it through this function.
+-- The path the running client plays the sound file `path` from. Both the
+-- 1.12.1 client and Unreal Azeroth play the standard "Interface\AddOns\..."
+-- form (Unreal Azeroth also accepts "/" separators), so the path is returned
+-- unchanged; a "../../Interface/AddOns/..." form is silent on Unreal Azeroth.
+-- Kept as the single place a client-specific sound path would go: addons
+-- route sounds they hold themselves (one typed in by the user) through it,
+-- and Fetch("sound", key) hands out its result.
 function lib:GetClientSoundPath(path)
-	if isUA and type(path) == "string" and find(lower(path), "^interface[\\/]addons[\\/]") then
-		return "../../" .. (string.gsub(path, "\\", "/"))
-	end
 	return path
 end
 
