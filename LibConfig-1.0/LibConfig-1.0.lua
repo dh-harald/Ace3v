@@ -19,7 +19,7 @@
 --
 -- Distributed as a LibStub embedded minor, like Ace3.
 
-local MAJOR, MINOR = "LibConfig-1.0", 7
+local MAJOR, MINOR = "LibConfig-1.0", 8
 local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return -- already loaded (older/newer minor)
@@ -35,6 +35,10 @@ local THEME = {
     border       = { 0.31, 0.31, 0.31, 1.00 },
     borderDim    = { 0.22, 0.22, 0.22, 1.00 },
     hover        = { 0.60, 0.60, 0.60, 1.00 },
+    -- the line under a section title and under a tab strip; a key of its
+    -- own, so a skin that sets `hover` to an interaction colour does not
+    -- also paint these static lines with it
+    rule         = { 0.60, 0.60, 0.60, 1.00 },
     -- accent (#FFD100)
     accent       = { 1.00, 0.82, 0.00, 1.00 },
     -- The accent with the colour taken out of it, for a control that is
@@ -147,18 +151,61 @@ local function GetGlobal(name)
     return nil
 end
 
+-- ===========================================================================
+-- Theme tracking (lib:SetTheme)
+--
+-- lib:SetTheme rewrites THEME's colour tables IN PLACE, so every closure and
+-- option holding one of them (hover handlers, `options.color or THEME.text`)
+-- reads the new colour from then on. What is already on screen is repainted
+-- in two ways:
+-- * page content (widgets, dropdown menus) is built anew on every render,
+--   so the open views are simply rendered again (lib:NotifyChange);
+-- * the frames built once and kept -- the window chrome, the pooled sidebar
+--   rows, every scrollbar, the colour dialog -- are built with
+--   `themeTracking` raised, and meanwhile the colour primitives below
+--   remember each region they paint and with which colour table. A later
+--   paint of a remembered region (hover, selection) updates the entry, and
+--   lib:SetTheme paints every remembered region again.
+-- Content regions are not remembered: they are thrown away on every render,
+-- and the list would only grow.
+-- ===========================================================================
+local themeTracking = 0
+-- region -> { kind, colour table }; kind is "vertex", "text" or "backdrop".
+local themedRegions = {}
+
+local function RememberColor(region, kind, color)
+    local entry = themedRegions[region]
+    if entry then
+        entry[1] = kind
+        entry[2] = color
+    elseif themeTracking > 0 then
+        themedRegions[region] = { kind, color }
+    end
+end
+
+local function ApplyColor(region, kind, color)
+    local r, g, b, a = color[1], color[2], color[3], color[4] or 1
+    if kind == "text" then
+        pcall(region.SetTextColor, region, r, g, b, a)
+    elseif kind == "backdrop" then
+        pcall(region.SetBackdropColor, region, r, g, b, a)
+    elseif region.SetVertexColor then
+        pcall(region.SetVertexColor, region, r, g, b, a)
+    end
+end
+
 local function SetRegionColor(region, color)
     if not region then return end
     color = color or THEME.text
-    if region.SetVertexColor then
-        pcall(region.SetVertexColor, region, color[1], color[2], color[3], color[4] or 1)
-    end
+    ApplyColor(region, "vertex", color)
+    RememberColor(region, "vertex", color)
 end
 
 local function SetTextColor(label, color)
     if not label then return end
     color = color or THEME.text
-    pcall(label.SetTextColor, label, color[1], color[2], color[3], color[4] or 1)
+    ApplyColor(label, "text", color)
+    RememberColor(label, "text", color)
 end
 
 -- ===========================================================================
@@ -230,7 +277,8 @@ local function CreateBackdrop(frame, options)
             insets = { left = 0, right = 0, top = 0, bottom = 0 },
         })
         if ok then
-            pcall(frame.SetBackdropColor, frame, background[1], background[2], background[3], background[4] or 1)
+            ApplyColor(frame, "backdrop", background)
+            RememberColor(frame, "backdrop", background)
             pcall(frame.SetBackdropBorderColor, frame, 0, 0, 0, 0)
         else
             if not frame.lcFill and frame.CreateTexture then
@@ -258,7 +306,8 @@ local function SetBackgroundColor(frame, color)
         return
     end
     if frame.SetBackdropColor then
-        pcall(frame.SetBackdropColor, frame, color[1], color[2], color[3], color[4] or 1)
+        ApplyColor(frame, "backdrop", color)
+        RememberColor(frame, "backdrop", color)
     end
 end
 
@@ -707,6 +756,18 @@ local function SetButtonGlyph(button, glyphName)
     pcall(button.glyph.Show, button.glyph)
 end
 
+--- The artwork the library draws for a glyph ("PLUS", "MINUS", "UP",
+-- "DOWN", "LEFT", "RIGHT", "SPEAKER"), so a host addon can draw the same
+-- markers on its own frames: returns the texture path and the four
+-- SetTexCoord coordinates, or nil when no artwork is registered for it
+-- (the library itself falls back to a text character then).
+function lib:GetGlyph(glyphName)
+    local path = GlyphPath(glyphName)
+    local coords = GLYPH_TEXCOORDS[glyphName or ""]
+    if not path or not coords then return nil end
+    return path, coords[1], coords[2], coords[3], coords[4]
+end
+
 local function CreateRule(parent, options)
     options = options or {}
     local line = parent:CreateTexture(nil, "ARTWORK")
@@ -837,39 +898,6 @@ local function CreateCheckbox(parent, options)
 
     control.SetValue(options.value)
     return control
-end
-
--- ===========================================================================
--- Draw order
---
--- Unreal Azeroth only re-sorts its draw order when a frame is created or
--- reparented. A frame that is shown, or gets its level, after the last such
--- event is drawn at a stale position: a dropdown menu
--- shown on click opened BEHIND the options window's background, so the
--- button seemed to do nothing, until any other frame creation re-sorted it.
--- Reparenting an empty frame, even to the parent it already has, forces
--- the re-sort. It has to happen on the NEXT frame: a re-sort in the same
--- frame as the show/level change still sees the old order (measured on
--- PunyAuras' options list, whose ResortDrawOrder this is).
---
--- Called after every page render (FinishContentScroll), whenever a
--- dropdown menu shows rows, and when the color dialog opens. Several
--- requests in one frame collapse into one re-sort. Harmless on the 1.12.1
--- client, where it is not needed.
--- ===========================================================================
-local drawOrderFrame, drawOrderTimer
-
-local function ResortOnNextFrame()
-    drawOrderTimer:SetScript("OnUpdate", nil)
-    pcall(drawOrderFrame.SetParent, drawOrderFrame, UIParent)
-end
-
-local function ResortDrawOrder()
-    if not drawOrderFrame then
-        drawOrderFrame = CreateFrame("Frame", nil, UIParent)
-        drawOrderTimer = CreateFrame("Frame", nil, UIParent)
-    end
-    drawOrderTimer:SetScript("OnUpdate", ResortOnNextFrame)
 end
 
 -- ===========================================================================
@@ -1267,8 +1295,6 @@ local function CreateDropdown(parent, options)
                 if row.playButton then row.playButton:Show() end
             end
         end
-        -- The menu and its rows are shown long after they were created.
-        ResortDrawOrder()
     end
 
     local function ScrollToSelected()
@@ -2049,7 +2075,7 @@ local SCROLLBAR_WIDTH = 16
 local SCROLLBAR_BUTTON = 16
 local SCROLLBAR_MIN_THUMB = 20
 
-local function CreateScrollBar(parent, options)
+local function BuildScrollBar(parent, options)
     options = options or {}
     local control = { maxOffset = 0, value = 0, visibleRatio = 1 }
     local step = options.step or ROW_HEIGHT
@@ -2275,6 +2301,15 @@ local function CreateScrollBar(parent, options)
     return control
 end
 
+-- A scrollbar lives as long as its view or host frame, so lib:SetTheme
+-- repaints it (see "Theme tracking").
+local function CreateScrollBar(parent, options)
+    themeTracking = themeTracking + 1
+    local control = BuildScrollBar(parent, options)
+    themeTracking = themeTracking - 1
+    return control
+end
+
 -- ===========================================================================
 -- Color picker
 --
@@ -2459,9 +2494,7 @@ end
 local colorDialog
 local CloseColorDialog
 
-local function EnsureColorDialog()
-    if colorDialog then return colorDialog end
-
+local function BuildColorDialog()
     local DIALOG_WIDTH = 300
     local SQUARE_W, SQUARE_H = 196, 140
     local STRIP_H = 18
@@ -2786,6 +2819,16 @@ local function EnsureColorDialog()
     return d
 end
 
+-- The dialog is built once and shared, so lib:SetTheme repaints it (see
+-- "Theme tracking").
+local function EnsureColorDialog()
+    if colorDialog then return colorDialog end
+    themeTracking = themeTracking + 1
+    BuildColorDialog()
+    themeTracking = themeTracking - 1
+    return colorDialog
+end
+
 -- Closes the shared dialog. accept=false restores the colour the owning
 -- control had when it was opened, so Cancel undoes every live preview;
 -- accept=true keeps whatever is currently previewed.
@@ -2938,7 +2981,6 @@ local function CreateColorPicker(parent, options)
         d:ClearAllPoints()
         d:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         d:Show()
-        ResortDrawOrder()
     end)
 
     control.SetValue(options.value)
@@ -3504,7 +3546,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             title:SetText(name)
         end
         AddWidget(title)
-        local rule = CreateRule(content, { color = THEME.hover })
+        local rule = CreateRule(content, { color = THEME.rule })
         rule:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(yCursor + 20))
         rule:SetWidth(CONTENT_WIDTH)
         AddWidget(rule)
@@ -4064,7 +4106,7 @@ RenderGroup = function(group, path, handler, root, appName, inInlineContext, cat
                         title:SetText(ResolveMember("name", root, appName, newPath, newHandler, key, opt) or key)
                     end
                     AddWidget(title)
-                    local rule = CreateRule(V.content, { color = THEME.hover })
+                    local rule = CreateRule(V.content, { color = THEME.rule })
                     rule:SetPoint("TOPLEFT", V.content, "TOPLEFT", 0, -(V.yCursor + 20))
                     rule:SetWidth(V.width)
                     AddWidget(rule)
@@ -4258,7 +4300,7 @@ RenderTabStrip = function(group, tabChildren, path, root, appName, catName)
     end
     view.yCursor = view.yCursor + numRows * TAB_HEIGHT + (numRows - 1) * TAB_GAP + ROW_GAP
 
-    local rule = CreateRule(content, { color = THEME.hover })
+    local rule = CreateRule(content, { color = THEME.rule })
     rule:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -view.yCursor)
     rule:SetWidth(CONTENT_WIDTH)
     AddWidget(rule)
@@ -4464,21 +4506,21 @@ end
 local function StyleRow(row, text, selected)
     if row.label then
         row.label:SetText(text)
-        pcall(row.label.SetTextColor, row.label, THEME.text[1], THEME.text[2], THEME.text[3], 1)
+        SetTextColor(row.label, selected and THEME.accent or THEME.text)
     end
     if selected then
         SetBackgroundColor(row, THEME.accentFill)
         SetBorderColor(row, THEME.accent)
-        if row.label then
-            pcall(row.label.SetTextColor, row.label, THEME.accent[1], THEME.accent[2], THEME.accent[3], 1)
-        end
     else
         SetBackgroundColor(row, THEME.backdrop)
         SetBorderColor(row, THEME.border)
     end
 end
 
+-- Sidebar rows are pooled for the life of the window, so lib:SetTheme
+-- repaints them (see "Theme tracking").
 local function CreateSidebarRow(index)
+    themeTracking = themeTracking + 1
     local row = CreateButton(sidebar, {
         name = "LibConfigRow" .. index,
         text = "",
@@ -4510,6 +4552,7 @@ local function CreateSidebarRow(index)
     row.toggle = toggle
 
     sidebarRows[index] = row
+    themeTracking = themeTracking - 1
     return row
 end
 
@@ -4731,10 +4774,6 @@ FinishContentScroll = function() -- forward-declared local, assigned here
             scrollBar.SetShown(false)
         end
     end
-
-    -- Every render of a page (window, tab, refresh, embedded view) ends
-    -- here, after its widgets were created, levelled and shown.
-    ResortDrawOrder()
 end
 
 -- Is this page's group still where it was when the page was built? A
@@ -5027,9 +5066,13 @@ local function Build()
     sidebarScrollBar.SetShown(false)
 end
 
+-- The window is built once, so lib:SetTheme repaints its chrome (see
+-- "Theme tracking").
 local function EnsurePanel()
     if panel then return panel end
+    themeTracking = themeTracking + 1
     Build()
+    themeTracking = themeTracking - 1
     return panel
 end
 
@@ -5156,6 +5199,41 @@ end
 
 function lib:Close()
     if panel then panel:Hide() end
+end
+
+-- Recolours the options window, every embedded view and the colour dialog.
+-- `theme` maps THEME keys (backdrop, backdropFade, border, borderDim, hover,
+-- rule, accent, accentDim, accentFill, sliderThumb, text, textDim, error) to
+-- { r, g, b [, a] }; a key left out keeps its colour, a missing alpha is 1.
+-- One library instance serves every addon that embeds it, so the theme
+-- applies to all of them. Glyph artwork (the +/- and arrow sprites) is not
+-- tinted.
+function lib:SetTheme(theme)
+    if type(theme) ~= "table" then return end
+    for key, color in pairs(theme) do
+        local current = THEME[key]
+        if type(current) == "table" and type(color) == "table" then
+            current[1] = tonumber(color[1]) or current[1]
+            current[2] = tonumber(color[2]) or current[2]
+            current[3] = tonumber(color[3]) or current[3]
+            current[4] = tonumber(color[4]) or 1
+        end
+    end
+    for region, entry in pairs(themedRegions) do
+        ApplyColor(region, entry[1], entry[2])
+    end
+    self:NotifyChange()
+end
+
+-- A copy of the current theme, in lib:SetTheme's format.
+function lib:GetTheme()
+    local theme = {}
+    for key, color in pairs(THEME) do
+        if type(color) == "table" then
+            theme[key] = { color[1], color[2], color[3], color[4] }
+        end
+    end
+    return theme
 end
 
 -- ===========================================================================

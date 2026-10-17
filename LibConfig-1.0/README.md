@@ -166,6 +166,28 @@ proven-on-this-client patterns — flat fill backdrops, explicit borders drawn a
 textures, a drag-thumb Button for `range` instead of the broken native Slider,
 and an own colour dialog instead of the broken native `ColorPickerFrame`.
 
+### Changing the colours
+
+```lua
+local LC = LibStub("LibConfig-1.0")
+LC:SetTheme({
+    accent     = { 0, 0.6, 1 },
+    accentFill = { 0, 0.6, 1, 0.22 },
+})
+local theme = LC:GetTheme() -- a copy, in SetTheme's format
+```
+
+Keys: `backdrop`, `backdropFade`, `border`, `borderDim`, `hover`, `rule`,
+`accent`, `accentDim`, `accentFill`, `sliderThumb`, `text`, `textDim`, `error`,
+each `{ r, g, b [, a] }`; a key left out keeps its colour, a missing alpha is 1.
+`hover` is the border of the control under the mouse; `rule` is the line under
+section titles and tab strips.
+`SetTheme` repaints what is already on screen (the window, open pages,
+embedded views, scrollbars made by `CreateScrollBar`, the colour dialog). One
+library instance serves every addon that embeds it, so the theme applies to
+all of them — it is meant for a UI skin, not for a single addon's
+preferences. The `+`/`-` and arrow sprites are not tinted.
+
 ### Artwork
 
 The library ships its own sprite sheets in `Media/` (`PlusMinusButton.blp` for
@@ -187,6 +209,18 @@ LC:SetMedia({
 
 Both keys are optional and expect ElvUI's sheet layout (the `PLUS`/`MINUS`
 halves, and `UP`/`DOWN`/`LEFT`/`RIGHT` cells respectively).
+
+To draw the same markers on frames of your own (e.g. a collapse button in
+your addon's list), ask for a glyph's artwork:
+
+```lua
+local path, left, right, top, bottom = LC:GetGlyph("PLUS") -- or "MINUS",
+                                     -- "UP", "DOWN", "LEFT", "RIGHT", "SPEAKER"
+if path then
+    texture:SetTexture(path)
+    texture:SetTexCoord(left, right, top, bottom)
+end -- nil: no artwork registered, draw your own
+```
 
 ## Requirements
 
