@@ -107,7 +107,10 @@ Widgets (`type`):
 - `multiselect` — one checkbox per `values` entry (table or function),
   sorted by text and packed into as many columns as fit, under the option's
   name. `get(info, key)` returns whether an entry is checked;
-  `set(info, key, checked)` receives each click.
+  `set(info, key, checked)` receives each click. When every value is a
+  texture escape (`"|Tpath:size:size|t"`, as ElvUI's `E:TextureString`
+  builds it), the entries draw as a grid of picture buttons instead (the
+  1.12.1 client has no `|T` escape); the checked one has the accent border.
 - `range` — drag-thumb slider (`min`/`max`/`step`) with an editable value box.
   `softMin`/`softMax` narrow the track and `bigStep` sets the drag's step, as
   in AceConfigDialog; a typed value may still go to `min`/`max`, rounded to
@@ -117,7 +120,8 @@ Widgets (`type`):
 - `color` — swatch opening the library's own colour dialog (the native
   `ColorPickerFrame` does not keep its colour on Unreal Azeroth); `hasAlpha`
   adds an opacity control. `get` returns r, g, b, a; `set` receives them.
-- `execute` — button (`func`, or `set` if `func` is absent).
+- `execute` — button (`func`, or `set` if `func` is absent). When
+  `disabled`, it draws dimmed and ignores clicks.
 - `header` / `description` — display-only rows.
 
 Option members (resolved the same way AceConfigDialog resolves them):
@@ -132,8 +136,20 @@ Option members (resolved the same way AceConfigDialog resolves them):
 - `get`, `set`, `func`, `disabled` and `hidden` are inherited: a leaf without
   its own takes the nearest enclosing group's (a leaf's own value always wins,
   so `disabled = false` on a leaf opts it out of a disabled group).
+- `validate`, plus `pattern` / `usage` on an `input` — as in AceConfigDialog;
+  a rejected value is not set, and its message shows in a red line under
+  the control.
+- `confirm` / `confirmText` — as in AceConfigDialog, on every widget type:
+  `confirm = true` asks with `confirmText` (default: "name - desc") before
+  the value is set or the button's `func` runs; a function or handler method
+  name gets the info table and the `set` arguments, and asks when it returns
+  a string (the text) or `true`. `confirm` is inherited like `set`. The
+  question is the library's own dialog (Accept / Cancel), not a
+  StaticPopup; Cancel, Escape or closing the window drops the change. A
+  `range` asks once for the released value and a `color` once on the colour
+  dialog's OK — the value is not set while it is dragged or previewed.
 - Not implemented: `tristate` (on `toggle` and `multiselect`), `keybinding`,
-  `confirm`, `validate`, `image`/`imageCoords`.
+  `image`/`imageCoords`.
 
 The page redraws itself the way AceConfigDialog does: after every committed
 value (a `range` only when the drag is released, a `color` only on the dialog's

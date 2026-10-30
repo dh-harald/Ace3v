@@ -19,7 +19,7 @@
 --
 -- Distributed as a LibStub embedded minor, like Ace3.
 
-local MAJOR, MINOR = "LibConfig-1.0", 8
+local MAJOR, MINOR = "LibConfig-1.0", 9
 local lib, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return -- already loaded (older/newer minor)
@@ -346,6 +346,9 @@ local function CreateLabel(parent, options)
     if options.height then
         pcall(label.SetHeight, label, options.height)
     end
+    -- Every caller passes false: with SetNonSpaceWrap(true), Unreal Azeroth
+    -- breaks a line at any character, inside a word even where a space
+    -- would do.
     if options.nonSpaceWrap ~= nil and label.SetNonSpaceWrap then
         pcall(label.SetNonSpaceWrap, label, options.nonSpaceWrap and true or false)
     end
@@ -361,14 +364,30 @@ local function CreateButton(parent, options)
     button:SetWidth(width)
     button:SetHeight(height)
     pcall(button.EnableMouse, button, true)
-    CreateBackdrop(button, options)
+    -- A disabled button keeps the mouse (its tooltip still shows) but
+    -- draws dimmed, does not light up and ignores clicks.
+    local disabled = options.disabled and true or false
+    local border = options.border
+    local hoverBorder = options.hoverBorder
+    if disabled then
+        border, hoverBorder = THEME.borderDim, THEME.borderDim
+    end
+    if disabled then
+        CreateBackdrop(button, {
+            background = options.background,
+            border = border,
+            thickness = options.thickness,
+        })
+    else
+        CreateBackdrop(button, options)
+    end
 
     local label = CreateLabel(button, {
-        color = options.textColor or THEME.text,
+        color = disabled and THEME.textDim or options.textColor or THEME.text,
         inherits = "GameFontNormal",
         width = math.max(1, width - 8),
         height = math.max(1, height - 4),
-        nonSpaceWrap = true,
+        nonSpaceWrap = false,
     })
     if label then
         pcall(label.ClearAllPoints, label)
@@ -378,13 +397,13 @@ local function CreateButton(parent, options)
     button.label = label
 
     button:SetScript("OnEnter", function()
-        SetBorderColor(button, options.hoverBorder or THEME.hover)
+        SetBorderColor(button, hoverBorder or THEME.hover)
     end)
     button:SetScript("OnLeave", function()
-        SetBorderColor(button, (type(options.border) == "table" and options.border) or THEME.border)
+        SetBorderColor(button, (type(border) == "table" and border) or THEME.border)
     end)
 
-    if type(options.onClick) == "function" then
+    if type(options.onClick) == "function" and not disabled then
         button:SetScript("OnClick", options.onClick)
     end
     return button
@@ -1847,11 +1866,14 @@ local function CreateSlider(parent, options)
         thumb:SetPoint("LEFT", track, "LEFT", offset, 0)
     end
 
+    -- The height has to hold a whole line of the font: on the 1.12.1 client
+    -- a FontString too short for its line draws "..." instead of the text,
+    -- however wide it is.
     local minLabel = CreateLabel(parent, {
         color = THEME.textDim,
         inherits = "GameFontNormalSmall",
         width = width / 2,
-        height = 12,
+        height = 16,
     })
     if minLabel then
         minLabel:SetPoint("TOPLEFT", track, "BOTTOMLEFT", 0, -3)
@@ -1863,7 +1885,7 @@ local function CreateSlider(parent, options)
         color = THEME.textDim,
         inherits = "GameFontNormalSmall",
         width = width / 2,
-        height = 12,
+        height = 16,
         justify = "RIGHT",
     })
     if maxLabel then
@@ -2754,10 +2776,13 @@ local function BuildColorDialog()
             inherits = "GameFontNormalSmall",
             justify = "LEFT",
             width = 60,
-            height = 12,
+            height = 16,
         })
+        -- Level with the slider's readout box, left of it: any higher and
+        -- it runs into the previous slider's minimum label, SLIDER_SPACING
+        -- leaves no separate row for it.
         if caption and slider.track then
-            caption:SetPoint("BOTTOMLEFT", slider.track, "TOPLEFT", 0, 14)
+            caption:SetPoint("BOTTOMLEFT", slider.track, "TOPLEFT", 0, 4)
             caption:SetText(CHANNELS[i][2])
         end
         slider.caption = caption
@@ -3139,8 +3164,9 @@ end
 -- off whatever does not fit, so the wrapping is simulated: words are laid
 -- onto lines greedily, each candidate line measured with GetStringWidth
 -- (the natural, unwrapped width) on a hidden FontString of the same font;
--- a word wider than a line takes as many lines as it covers, since the
--- label breaks inside words (SetNonSpaceWrap). Line breaks in the text
+-- a word wider than a line is still counted for as many lines as it
+-- covers, so the label never cuts text off even where the client breaks
+-- such a word. Line breaks in the text
 -- start a new line. The line height is the font's size plus a third
 -- (GetFont's size, which both clients report); DESC_H stays the minimum,
 -- so a one-line description keeps its old row.
@@ -3444,6 +3470,161 @@ local function ClearContent()
     V.widgets = {}
 end
 
+-- ===========================================================================
+-- Confirmation dialog (`confirm` / `confirmText`)
+--
+-- AceConfigDialog asks through a native StaticPopup; this library shows its
+-- own dialog in the window's look instead, built once and shared like the
+-- colour dialog: a message over Accept / Cancel, centred on UIParent, above
+-- the options window in strata. Escape cancels it (UISpecialFrames), and so
+-- does closing the options window. Only Accept runs the pending action;
+-- the page was already redrawn from `get` when the question was asked, so
+-- a cancelled change needs no undo.
+-- ===========================================================================
+local CONFIRM_WIDTH = 320
+local confirmDialog
+local CloseConfirmDialog
+
+local function BuildConfirmDialog()
+    local d = CreatePanel(UIParent, {
+        name = "LibConfigConfirm",
+        width = CONFIRM_WIDTH,
+        height = 100,
+    })
+    pcall(d.SetFrameStrata, d, "DIALOG")
+    pcall(d.EnableMouse, d, true)
+    d:Hide()
+    confirmDialog = d
+
+    d.message = CreateLabel(d, {
+        color = THEME.text,
+        inherits = "GameFontNormalSmall",
+        justify = "CENTER",
+        width = CONFIRM_WIDTH - 24,
+        height = DESC_H,
+        nonSpaceWrap = false,
+    })
+    if d.message then
+        d.message:SetPoint("TOP", d, "TOP", 0, -16)
+    end
+
+    local accept = CreateButton(d, {
+        name = "LibConfigConfirmAccept",
+        text = GetGlobal("ACCEPT") or "Accept",
+        width = 90,
+        height = 22,
+        onClick = function() CloseConfirmDialog(true) end,
+    })
+    accept:SetPoint("BOTTOMRIGHT", d, "BOTTOM", -4, 14)
+
+    local cancel = CreateButton(d, {
+        name = "LibConfigConfirmCancel",
+        text = GetGlobal("CANCEL") or "Cancel",
+        width = 90,
+        height = 22,
+        onClick = function() CloseConfirmDialog(false) end,
+    })
+    cancel:SetPoint("BOTTOMLEFT", d, "BOTTOM", 4, 14)
+
+    d.chrome = { d.message, accept, cancel }
+
+    if type(UISpecialFrames) == "table" then
+        tinsert(UISpecialFrames, "LibConfigConfirm")
+    end
+
+    -- Children are hidden by hand (see "Visibility helpers"). Whatever hid
+    -- the dialog, the pending action is dropped with it.
+    d:SetScript("OnHide", function()
+        d.onAccept = nil
+        SetListShown(d.chrome, false)
+    end)
+end
+
+local function EnsureConfirmDialog()
+    if confirmDialog then return confirmDialog end
+    themeTracking = themeTracking + 1
+    BuildConfirmDialog()
+    themeTracking = themeTracking - 1
+    return confirmDialog
+end
+
+-- accept=true runs the pending action after the dialog is gone; anything
+-- else only closes it.
+CloseConfirmDialog = function(accept)
+    local d = confirmDialog
+    if not d or not d:IsShown() then return end
+    local onAccept = d.onAccept
+    d.onAccept = nil
+    d:Hide()
+    if accept and type(onAccept) == "function" then onAccept() end
+end
+
+-- A dialog already open is cancelled first: one question at a time.
+local function ShowConfirmDialog(text, onAccept)
+    CloseConfirmDialog(false)
+    local d = EnsureConfirmDialog()
+    local height = DescriptionHeight(text, CONFIRM_WIDTH - 24)
+    if d.message then
+        d.message:SetHeight(height)
+        d.message:SetText(text)
+    end
+    d:SetHeight(height + 66)
+    d.onAccept = onAccept
+    SetListShown(d.chrome, true)
+    d:ClearAllPoints()
+    d:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    d:Show()
+end
+
+-- Runs `commit` (the control's set, or an execute's func) now, or asks first
+-- when the option's `confirm` says so -- AceConfigDialog's ActivateControl
+-- rules. `confirm` is inherited like `set`; `confirmText` is the option's
+-- own literal. `confirm` may be:
+-- * `true` -- ask with `confirmText`, else "<name> - <desc>" (or <name>);
+-- * a function or handler method name, called with the info table and the
+--   arguments `set` gets (`values`, as for ValidateValue): a string return
+--   asks with that text, a literal `true` asks as above, anything else
+--   (including an error, as there) commits without asking.
+-- A method name the handler lacks asks with the default text, where
+-- AceConfigDialog raises an error -- either way the action does not run
+-- unasked. On Accept the view is redrawn after `commit`.
+local function AskConfirm(root, appName, path, handler, arg, opt, name, desc, values, commit, view)
+    local confirm = InheritedMember("confirm", root, path, opt)
+    local text = opt.confirmText
+    if type(confirm) == "function"
+        or (type(confirm) == "string" and handler and type(handler[confirm]) == "function") then
+        local info = BuildInfo(root, appName, path, handler, arg, opt)
+        local ok, result
+        if type(confirm) == "function" then
+            ok, result = pcall(confirm, info, values[1], values[2], values[3], values[4])
+        else
+            ok, result = pcall(handler[confirm], handler, info, values[1], values[2], values[3], values[4])
+        end
+        if ok and type(result) == "string" then
+            text, confirm = result, true
+        elseif ok then
+            confirm = result
+        else
+            confirm = false
+        end
+    elseif type(confirm) == "string" then
+        confirm = true
+    end
+
+    if confirm ~= true then
+        commit()
+        return
+    end
+    if text == nil then
+        text = name
+        if desc then text = text .. " - " .. tostring(desc) end
+    end
+    ShowConfirmDialog(tostring(text), function()
+        commit()
+        RefreshView(view)
+    end)
+end
+
 -- Renders one leaf option into the current view; advances its yCursor and
 -- registers its regions.
 local function RenderLeaf(opt, arg, path, handler, root, appName)
@@ -3512,6 +3693,19 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         return true
     end
 
+    -- Runs `commit` now or after the option's `confirm` dialog (see
+    -- AskConfirm); `values` as for Accept.
+    local function Confirm(values, commit)
+        AskConfirm(root, appName, path, handler, arg, opt, name, desc, values, commit, view)
+    end
+
+    -- A range or color with a `confirm` asks once, for the value the user
+    -- settled on (drag released, typed value entered, colour dialog OK),
+    -- never for each stepped or previewed value: until then the value is
+    -- only held here, not set.
+    local asks = InheritedMember("confirm", root, path, opt)
+    asks = asks ~= nil and asks ~= false
+
     -- Dimming the NAME is the fallback disabled cue, for the control types
     -- that have no way of showing the state on themselves. A type that
     -- greys out its own control (toggle) passes false and keeps its label
@@ -3560,7 +3754,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             justify = "LEFT",
             width = CONTENT_WIDTH,
             height = descHeight,
-            nonSpaceWrap = true,
+            nonSpaceWrap = false,
         })
         if label then
             label:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
@@ -3577,7 +3771,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             disabled = disabled,
             onChange = function(v)
                 if Accept({ v }) then
-                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    Confirm({ v }, function()
+                        ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    end)
                 end
                 AfterCommit()
             end,
@@ -3596,7 +3792,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
 
         local function OnInputChange(v)
             if Accept({ v }) then
-                ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                Confirm({ v }, function()
+                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                end)
             end
             AfterCommit()
         end
@@ -3664,6 +3862,15 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         local current = ResolveMember("get", root, appName, path, handler, arg, opt)
         local full = (opt.width == "full")
 
+        local function OnSelectChange(v)
+            if Accept({ v }) then
+                Confirm({ v }, function()
+                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                end)
+            end
+            AfterCommit()
+        end
+
         -- `dialogControl = "LSM30_Font"` / `"LSM30_Statusbar"` -- matches
         -- real ElvUI's/AceGUI's own actual field convention (a "select"
         -- type option table names a custom dialog control), so a real
@@ -3724,12 +3931,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 previewType = previewType,
                 menuParent = view.menuParent,
                 getScrollOffset = function() return view.offset end,
-                onChange = function(v)
-                    if Accept({ v }) then
-                        ResolveMember("set", root, appName, path, handler, arg, opt, v)
-                    end
-                    AfterCommit()
-                end,
+                onChange = OnSelectChange,
             })
             dd:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
             if desc then AttachTooltip(dd.button, desc) end
@@ -3744,12 +3946,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 previewType = previewType,
                 menuParent = view.menuParent,
                 getScrollOffset = function() return view.offset end,
-                onChange = function(v)
-                    if Accept({ v }) then
-                        ResolveMember("set", root, appName, path, handler, arg, opt, v)
-                    end
-                    AfterCommit()
-                end,
+                onChange = OnSelectChange,
             })
             dd:SetPoint("TOPLEFT", content, "TOPLEFT", LABEL_WIDTH + CONTROL_GAP, -yCursor)
             if desc then AttachTooltip(dd.button, desc) end
@@ -3788,10 +3985,65 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         AddWidget(label)
         yCursor = yCursor + 16
 
+        -- Values written as texture escapes ("|Tpath:width:height|t", what
+        -- ElvUI's E:TextureString builds) draw as a grid of picture buttons:
+        -- the 1.12.1 client has no |T escape, so the text would show raw.
+        -- The checked entry gets the accent border; a click sets the entry
+        -- the way a checkbox click would.
+        local images = table.getn(items) > 0
+        local j
+        for j = 1, table.getn(items) do
+            local _, _, file, w = string.find(items[j].text, "^|T([^:|]+):?(%d*)")
+            if file then
+                items[j].image, items[j].imageSize = file, tonumber(w)
+            else
+                images = false
+            end
+        end
+
+        if images then
+            local size = items[1].imageSize or 32
+            local cell = size + 8
+            local perRow = math.max(1, math.floor(CONTENT_WIDTH / cell))
+            for j = 1, table.getn(items) do
+                local item = items[j]
+                local index = j - 1
+                local x = (index - math.floor(index / perRow) * perRow) * cell
+                local y = yCursor + math.floor(index / perRow) * cell
+                local checked = ResolveMember("get", root, appName, path, handler, arg, opt, item.value) and true or false
+                local border = (checked and (disabled and THEME.accentDim or THEME.accent)) or (disabled and THEME.borderDim) or nil
+                local button = CreateButton(content, {
+                    text = "",
+                    width = size + 6,
+                    height = size + 6,
+                    border = border,
+                    hoverBorder = (checked or disabled) and border or nil,
+                    onClick = function()
+                        if disabled then return end
+                        if Accept({ item.value, not checked }) then
+                            Confirm({ item.value, not checked }, function()
+                                ResolveMember("set", root, appName, path, handler, arg, opt, item.value, not checked)
+                            end)
+                        end
+                        AfterCommit()
+                    end,
+                })
+                local picture = button:CreateTexture(nil, "ARTWORK")
+                picture:SetTexture(item.image)
+                picture:SetPoint("TOPLEFT", button, "TOPLEFT", 3, -3)
+                picture:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3, 3)
+                if disabled then picture:SetAlpha(0.4) end
+                button:SetPoint("TOPLEFT", content, "TOPLEFT", x, -y)
+                if desc then AttachTooltip(button, desc) end
+                AddWidget(button)
+            end
+            view.yCursor = yCursor + math.ceil(table.getn(items) / perRow) * cell + ROW_GAP
+            return
+        end
+
         local columns = math.max(1, math.floor(CONTENT_WIDTH / MULTISELECT_COLUMN_WIDTH))
         local columnWidth = math.floor(CONTENT_WIDTH / columns)
         local column, row = 0, 1
-        local j
         for j = 1, table.getn(items) do
             local item = items[j]
             column = column + 1
@@ -3807,7 +4059,9 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
                 disabled = disabled,
                 onChange = function(v)
                     if Accept({ item.value, v }) then
-                        ResolveMember("set", root, appName, path, handler, arg, opt, item.value, v)
+                        Confirm({ item.value, v }, function()
+                            ResolveMember("set", root, appName, path, handler, arg, opt, item.value, v)
+                        end)
                     end
                     AfterCommit()
                 end,
@@ -3836,6 +4090,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
 
     elseif t == "range" then
         local current = ResolveMember("get", root, appName, path, handler, arg, opt)
+        local pending
         AddNameLabel()
         local sl = CreateSlider(content, {
             min = opt.min,
@@ -3852,12 +4107,25 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             -- release shows the last accepted value with the message.
             onChange = function(v)
                 if Accept({ v }) then
-                    ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    if asks then
+                        pending = v
+                    else
+                        ResolveMember("set", root, appName, path, handler, arg, opt, v)
+                    end
                 end
             end,
             -- Deliberately NOT on onChange: that one fires for every
             -- stepped value the thumb passes through.
-            onCommit = AfterCommit,
+            onCommit = function()
+                local value = pending
+                pending = nil
+                if value ~= nil and value ~= current then
+                    Confirm({ value }, function()
+                        ResolveMember("set", root, appName, path, handler, arg, opt, value)
+                    end)
+                end
+                AfterCommit()
+            end,
         })
         -- BUG FIXED (MINOR 7): CreateSlider's own editable-value box floats
         -- ABOVE its track (see CreateSlider) -- anchoring the track's own
@@ -3895,6 +4163,19 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
         end
         if a == nil then a = 1 end
 
+        local function SetColor(color)
+            local setInfo = BuildInfo(root, appName, path, handler, arg, opt)
+            if type(setter) == "function" then
+                setter(setInfo, color.r, color.g, color.b, color.a)
+            elseif type(setter) == "string" and handler and handler[setter] then
+                handler[setter](handler, setInfo, color.r, color.g, color.b, color.a)
+            end
+        end
+
+        -- With a `confirm`, the dialog's live preview is not set: the last
+        -- previewed colour waits for OK. The dialog's Cancel reports the
+        -- starting colour, which then asks nothing.
+        local pending
         AddNameLabel()
         local cp = CreateColorPicker(content, {
             value = { r = r, g = g, b = b, a = a },
@@ -3903,16 +4184,24 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             text = name,
             onChange = function(color)
                 if not Accept({ color.r, color.g, color.b, color.a }) then return end
-                local setInfo = BuildInfo(root, appName, path, handler, arg, opt)
-                if type(setter) == "function" then
-                    setter(setInfo, color.r, color.g, color.b, color.a)
-                elseif type(setter) == "string" and handler and handler[setter] then
-                    handler[setter](handler, setInfo, color.r, color.g, color.b, color.a)
+                if asks then
+                    pending = color
+                else
+                    SetColor(color)
                 end
             end,
             -- Deliberately NOT on onChange: that one fires continuously
             -- while a marker is dragged around the colour square.
-            onCommit = AfterCommit,
+            onCommit = function()
+                local color = pending
+                pending = nil
+                if color and (color.r ~= r or color.g ~= g or color.b ~= b or color.a ~= a) then
+                    Confirm({ color.r, color.g, color.b, color.a }, function()
+                        SetColor(color)
+                    end)
+                end
+                AfterCommit()
+            end,
         })
         cp:SetPoint("TOPLEFT", content, "TOPLEFT", LABEL_WIDTH + CONTROL_GAP, -yCursor + (ROW_HEIGHT - 16) / 2)
         if desc then AttachTooltip(cp.swatch, desc) end
@@ -3924,16 +4213,19 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             text = name,
             width = CONTENT_WIDTH,
             height = 24,
+            disabled = disabled,
             onClick = function()
                 -- Presence checked through InheritedMember, not `opt.func`:
                 -- `func` is inheritable, so a button relying on its group's
                 -- func would otherwise fall through to the `set` branch and
                 -- write `true` into a DB field named after the button.
-                if InheritedMember("func", root, path, opt) ~= nil then
-                    ResolveMember("func", root, appName, path, handler, arg, opt)
-                else
-                    ResolveMember("set", root, appName, path, handler, arg, opt, true)
-                end
+                Confirm({}, function()
+                    if InheritedMember("func", root, path, opt) ~= nil then
+                        ResolveMember("func", root, appName, path, handler, arg, opt)
+                    else
+                        ResolveMember("set", root, appName, path, handler, arg, opt, true)
+                    end
+                end)
 
                 -- A button exists to CHANGE something, and the values
                 -- around it were read once, at render time. Without this
@@ -3969,7 +4261,7 @@ local function RenderLeaf(opt, arg, path, handler, root, appName)
             justify = "LEFT",
             width = CONTENT_WIDTH,
             height = DESC_H,
-            nonSpaceWrap = true,
+            nonSpaceWrap = false,
         })
         if label then
             label:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -yCursor)
@@ -4920,6 +5212,9 @@ local function Build()
     })
     panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     pcall(panel.SetFrameStrata, panel, "HIGH")
+    -- Without it the window's empty areas pass the mouse to the world below:
+    -- a unit behind the window shows its tooltip and can be clicked.
+    pcall(panel.EnableMouse, panel, true)
 
     if type(UISpecialFrames) == "table" then
         tinsert(UISpecialFrames, "LibConfigPanel")
@@ -4941,6 +5236,9 @@ local function Build()
             pcall(focusedEditBox.ClearFocus, focusedEditBox)
             focusedEditBox = nil
         end
+        -- A question about a page that is no longer on screen is dropped,
+        -- never answered: its Accept would redraw a hidden window.
+        CloseConfirmDialog(false)
         V = panelView
         SetListShown(panelChrome, false)
         if panelView.scrollBar then panelView.scrollBar.SetShown(false) end
